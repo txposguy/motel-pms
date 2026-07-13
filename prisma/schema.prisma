@@ -1,8 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -10,4 +8,114 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// --- Slice 1: Foundation ------------------------------------------------
+// Property, room types, rooms, users/PINs, audit log.
+// See PRD.md §3.2 for the full target data model. Only the tables needed
+// for the Room Rack (slice 1) are modeled so far — everything else
+// (guests, stays, folios, payments, tax rules...) comes in later slices.
+
+enum RoomStatus {
+  vacant_clean
+  vacant_dirty
+  occupied
+  out_of_order
+}
+
+enum UserRole {
+  owner
+  clerk
+  housekeeper
+}
+
+model Property {
+  id      String @id @default(cuid())
+  name    String
+  address String
+  city    String
+  state   String
+  zip     String
+  phone   String
+  timezone String @default("America/Chicago")
+
+  checkInTime  String @default("15:00") @map("check_in_time")
+  checkOutTime String @default("11:00") @map("check_out_time")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  roomTypes RoomType[]
+  rooms     Room[]
+  users     User[]
+  auditLog  AuditLog[]
+
+  @@map("properties")
+}
+
+model RoomType {
+  id         String @id @default(cuid())
+  propertyId String @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  name             String
+  defaultOccupancy Int    @default(2) @map("default_occupancy")
+  maxOccupancy     Int    @default(4) @map("max_occupancy")
+
+  rooms Room[]
+
+  @@map("room_types")
+}
+
+model Room {
+  id         String @id @default(cuid())
+  propertyId String @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  roomTypeId String   @map("room_type_id")
+  roomType   RoomType @relation(fields: [roomTypeId], references: [id])
+
+  roomNumber String     @map("room_number")
+  floor      String?
+  status     RoomStatus @default(vacant_clean)
+  notes      String?
+
+  @@unique([propertyId, roomNumber])
+  @@map("rooms")
+}
+
+model User {
+  id         String @id @default(cuid())
+  propertyId String @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  name   String
+  role   UserRole
+  pinHash String  @map("pin_hash")
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  auditEntries AuditLog[]
+
+  @@map("users")
+}
+
+model AuditLog {
+  id         String @id @default(cuid())
+  propertyId String @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  entityType String  @map("entity_type")
+  entityId   String  @map("entity_id")
+  action     String
+  before     Json?
+  after      Json?
+
+  @@map("audit_log")
 }
