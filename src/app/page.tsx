@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getPrimaryProperty, getRoomsForProperty } from "@/lib/data/rooms";
 import type { RoomStatus } from "@/generated/prisma/enums";
 
@@ -19,6 +20,8 @@ const STATUS_STYLES: Record<RoomStatus, { label: string; classes: string }> = {
     classes: "bg-gray-200 border-gray-400 text-gray-600",
   },
 };
+
+const VACANT_STATUSES: RoomStatus[] = ["vacant_clean", "vacant_dirty"];
 
 export default async function Home() {
   const property = await getPrimaryProperty();
@@ -56,28 +59,33 @@ export default async function Home() {
           </span>
           <span>0 arrivals due</span>
           <span>0 departures due</span>
-          <button
-            type="button"
-            disabled
-            className="cursor-not-allowed rounded-md bg-gray-300 px-4 py-2 text-sm font-semibold text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+          <Link
+            href="/check-in"
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             CHECK IN
-          </button>
+          </Link>
         </div>
       </header>
 
       <div className="grid grid-cols-2 gap-3 p-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
         {rooms.map((room) => {
           const style = STATUS_STYLES[room.status];
-          return (
-            <div
-              key={room.id}
-              className={`rounded-lg border-2 p-4 ${style.classes}`}
-            >
+          const isVacant = VACANT_STATUSES.includes(room.status);
+          const tile = (
+            <div className={`rounded-lg border-2 p-4 ${style.classes} ${isVacant ? "cursor-pointer transition hover:brightness-95" : ""}`}>
               <div className="text-2xl font-bold">{room.roomNumber}</div>
               <div className="mt-1 text-xs font-medium uppercase tracking-wide">{style.label}</div>
               <div className="mt-2 text-xs opacity-75">{room.roomType.name}</div>
             </div>
+          );
+
+          return isVacant ? (
+            <Link key={room.id} href={`/check-in?room=${room.id}`}>
+              {tile}
+            </Link>
+          ) : (
+            <div key={room.id}>{tile}</div>
           );
         })}
       </div>

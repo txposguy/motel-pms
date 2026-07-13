@@ -12,9 +12,9 @@ datasource db {
 
 // --- Slice 1: Foundation ------------------------------------------------
 // Property, room types, rooms, users/PINs, audit log.
-// See PRD.md §3.2 for the full target data model. Only the tables needed
-// for the Room Rack (slice 1) are modeled so far — everything else
-// (guests, stays, folios, payments, tax rules...) comes in later slices.
+// See PRD.md §3.2 for the full target data model. Tables are added
+// incrementally, slice by slice — not everything in the PRD exists yet
+// (payments, tax rules, housekeeping, reservations... still to come).
 
 enum RoomStatus {
   vacant_clean
@@ -30,17 +30,19 @@ enum UserRole {
 }
 
 model Property {
-  id      String @id @default(cuid())
-  name    String
-  address String
-  city    String
-  state   String
-  zip     String
-  phone   String
+  id       String @id @default(cuid())
+  name     String
+  address  String
+  city     String
+  state    String
+  zip      String
+  phone    String
   timezone String @default("America/Chicago")
 
   checkInTime  String @default("15:00") @map("check_in_time")
   checkOutTime String @default("11:00") @map("check_out_time")
+
+  registrationCardFooterText String? @map("registration_card_footer_text")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -49,27 +51,31 @@ model Property {
   rooms     Room[]
   users     User[]
   auditLog  AuditLog[]
+  ratePlans RatePlan[]
+  guests    Guest[]
+  stays     Stay[]
 
   @@map("properties")
 }
 
 model RoomType {
-  id         String @id @default(cuid())
-  propertyId String @map("property_id")
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
   property   Property @relation(fields: [propertyId], references: [id])
 
   name             String
   defaultOccupancy Int    @default(2) @map("default_occupancy")
   maxOccupancy     Int    @default(4) @map("max_occupancy")
 
-  rooms Room[]
+  rooms     Room[]
+  ratePlans RatePlan[]
 
   @@map("room_types")
 }
 
 model Room {
-  id         String @id @default(cuid())
-  propertyId String @map("property_id")
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
   property   Property @relation(fields: [propertyId], references: [id])
 
   roomTypeId String   @map("room_type_id")
@@ -80,30 +86,35 @@ model Room {
   status     RoomStatus @default(vacant_clean)
   notes      String?
 
+  stays Stay[]
+
   @@unique([propertyId, roomNumber])
   @@map("rooms")
 }
 
 model User {
-  id         String @id @default(cuid())
-  propertyId String @map("property_id")
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
   property   Property @relation(fields: [propertyId], references: [id])
 
-  name   String
-  role   UserRole
-  pinHash String  @map("pin_hash")
-  active Boolean @default(true)
+  name    String
+  role    UserRole
+  pinHash String   @map("pin_hash")
+  active  Boolean  @default(true)
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  auditEntries AuditLog[]
+  auditEntries    AuditLog[]
+  checkedInStays  Stay[]      @relation("CheckedInBy")
+  checkedOutStays Stay[]      @relation("CheckedOutBy")
+  folioLines      FolioLine[]
 
   @@map("users")
 }
 
 model AuditLog {
-  id         String @id @default(cuid())
-  propertyId String @map("property_id")
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
   property   Property @relation(fields: [propertyId], references: [id])
 
   userId String @map("user_id")
@@ -111,11 +122,181 @@ model AuditLog {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  entityType String  @map("entity_type")
-  entityId   String  @map("entity_id")
+  entityType String @map("entity_type")
+  entityId   String @map("entity_id")
   action     String
   before     Json?
   after      Json?
 
   @@map("audit_log")
+}
+
+// --- Slice 2: Check-in (manual) -----------------------------------------
+// Rate plans, guests, stays, folios + folio lines. The registration card
+// screen (manual entry only — no barcode scanner yet, that's slice 3).
+
+enum RatePlanUnit {
+  hourly
+  nightly
+  weekly
+}
+
+enum IdType {
+  drivers_license
+  state_id
+  passport
+  other
+}
+
+enum StayStatus {
+  in_house
+  checked_out
+  walked
+}
+
+enum FolioStatus {
+  open
+  closed
+}
+
+enum FolioLineType {
+  room_charge
+  tax
+  incidental
+  adjustment
+  void
+}
+
+model RatePlan {
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  roomTypeId String?   @map("room_type_id")
+  roomType   RoomType? @relation(fields: [roomTypeId], references: [id])
+
+  name          String
+  unit          RatePlanUnit
+  durationUnits Int          @map("duration_units")
+  baseAmount    Decimal      @map("base_amount") @db.Decimal(10, 2)
+  active        Boolean      @default(true)
+
+  stays Stay[]
+
+  @@map("rate_plans")
+}
+
+model Guest {
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  firstName  String  @map("first_name")
+  middleName String? @map("middle_name")
+  lastName   String  @map("last_name")
+
+  addressLine1 String? @map("address_line1")
+  city         String?
+  state        String?
+  zip          String?
+
+  dob   DateTime?
+  phone String?
+  email String?
+
+  idType            IdType?   @map("id_type")
+  idNumberEncrypted String?   @map("id_number_encrypted")
+  idNumberHash      String?   @map("id_number_hash")
+  idState           String?   @map("id_state")
+  idExpiration      DateTime? @map("id_expiration")
+
+  vehicleMake  String? @map("vehicle_make")
+  vehicleModel String? @map("vehicle_model")
+  vehicleColor String? @map("vehicle_color")
+  vehiclePlate String? @map("vehicle_plate")
+  vehicleState String? @map("vehicle_state")
+
+  dnrFlag   Boolean @default(false) @map("dnr_flag")
+  dnrReason String? @map("dnr_reason")
+  notes     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  stays Stay[]
+
+  @@index([propertyId, idNumberHash])
+  @@map("guests")
+}
+
+model Stay {
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  guestId String @map("guest_id")
+  guest   Guest  @relation(fields: [guestId], references: [id])
+
+  roomId String @map("room_id")
+  room   Room   @relation(fields: [roomId], references: [id])
+
+  ratePlanId String   @map("rate_plan_id")
+  ratePlan   RatePlan @relation(fields: [ratePlanId], references: [id])
+
+  checkedInAt        DateTime  @default(now()) @map("checked_in_at")
+  expectedCheckOutAt DateTime  @map("expected_check_out_at")
+  checkedOutAt       DateTime? @map("checked_out_at")
+
+  adults           Int   @default(1)
+  children         Int   @default(0)
+  additionalGuests Json? @map("additional_guests")
+
+  status StayStatus @default(in_house)
+
+  taxExempt           Boolean @default(false) @map("tax_exempt")
+  taxExemptReason     String? @map("tax_exempt_reason")
+  taxExemptCertNumber String? @map("tax_exempt_cert_number")
+
+  consecutiveNightsCounter Int @default(1) @map("consecutive_nights_counter")
+
+  checkedInByUserId  String  @map("checked_in_by_user_id")
+  checkedInByUser    User    @relation("CheckedInBy", fields: [checkedInByUserId], references: [id])
+  checkedOutByUserId String? @map("checked_out_by_user_id")
+  checkedOutByUser   User?   @relation("CheckedOutBy", fields: [checkedOutByUserId], references: [id])
+
+  folio Folio?
+
+  @@map("stays")
+}
+
+model Folio {
+  id     String @id @default(cuid())
+  stayId String @unique @map("stay_id")
+  stay   Stay   @relation(fields: [stayId], references: [id])
+
+  status   FolioStatus @default(open)
+  closedAt DateTime?   @map("closed_at")
+
+  lines FolioLine[]
+
+  @@map("folios")
+}
+
+// APPEND ONLY. Never UPDATE, never DELETE a folio_lines row — corrections
+// are new lines (adjustment/void) that reference what they reverse.
+model FolioLine {
+  id      String @id @default(cuid())
+  folioId String @map("folio_id")
+  folio   Folio  @relation(fields: [folioId], references: [id])
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  createdByUserId String   @map("created_by_user_id")
+  createdByUser   User     @relation(fields: [createdByUserId], references: [id])
+
+  type         FolioLineType
+  description  String
+  amount       Decimal       @db.Decimal(10, 2)
+  voidsLineId  String?       @map("voids_line_id")
+  businessDate DateTime      @map("business_date") @db.Date
+
+  @@map("folio_lines")
 }

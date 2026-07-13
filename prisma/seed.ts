@@ -9,7 +9,10 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   const property = await prisma.property.upsert({
     where: { id: "seed-property-1" },
-    update: {},
+    update: {
+      registrationCardFooterText:
+        "By signing below, guest agrees to the property's rules and rates and authorizes the charges listed above.",
+    },
     create: {
       id: "seed-property-1",
       name: "Lone Star Inn",
@@ -18,6 +21,8 @@ async function main() {
       state: "TX",
       zip: "77450",
       phone: "(281) 555-0143",
+      registrationCardFooterText:
+        "By signing below, guest agrees to the property's rules and rates and authorizes the charges listed above.",
     },
   });
 
@@ -88,7 +93,34 @@ async function main() {
     },
   });
 
-  console.log(`Seeded property "${property.name}" with ${roomPlan.length} rooms.`);
+  const ratePlans: {
+    id: string;
+    name: string;
+    unit: "hourly" | "nightly" | "weekly";
+    durationUnits: number;
+    baseAmount: number;
+  }[] = [
+    { id: "seed-rateplan-hourly", name: "4-Hour", unit: "hourly", durationUnits: 4, baseAmount: 35 },
+    { id: "seed-rateplan-nightly", name: "Daily Walk-In", unit: "nightly", durationUnits: 1, baseAmount: 65 },
+    { id: "seed-rateplan-weekly", name: "Weekly", unit: "weekly", durationUnits: 7, baseAmount: 350 },
+  ];
+
+  for (const rp of ratePlans) {
+    await prisma.ratePlan.upsert({
+      where: { id: rp.id },
+      update: {},
+      create: {
+        id: rp.id,
+        propertyId: property.id,
+        name: rp.name,
+        unit: rp.unit,
+        durationUnits: rp.durationUnits,
+        baseAmount: rp.baseAmount,
+      },
+    });
+  }
+
+  console.log(`Seeded property "${property.name}" with ${roomPlan.length} rooms and ${ratePlans.length} rate plans.`);
 }
 
 main()
