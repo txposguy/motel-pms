@@ -59,6 +59,7 @@ export async function checkInAction(
     adults: Number(formData.get("adults") || 1),
     children: Number(formData.get("children") || 0),
     additionalGuests,
+    rawAamvaPayload: String(formData.get("rawAamvaPayload") || "").trim() || undefined,
   };
 
   if (!input.firstName || !input.lastName) {

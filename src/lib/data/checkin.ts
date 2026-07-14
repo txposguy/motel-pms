@@ -81,6 +81,7 @@ export type CheckInInput = {
   adults: number;
   children: number;
   additionalGuests: string[];
+  rawAamvaPayload?: string;
 };
 
 export async function checkInGuest(input: CheckInInput) {
@@ -127,6 +128,7 @@ export async function checkInGuest(input: CheckInInput) {
         vehicleColor: input.vehicleColor || null,
         vehiclePlate: input.vehiclePlate || null,
         vehicleState: input.vehicleState || null,
+        rawAamvaPayloadEncrypted: input.rawAamvaPayload ? encrypt(input.rawAamvaPayload) : null,
       },
     });
 

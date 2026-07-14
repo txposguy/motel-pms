@@ -210,6 +210,10 @@ model Guest {
   idState           String?   @map("id_state")
   idExpiration      DateTime? @map("id_expiration")
 
+  // Encrypted, kept for parser debugging only — purged on a retention
+  // schedule (PRD §10). Never displayed in the UI.
+  rawAamvaPayloadEncrypted String? @map("raw_aamva_payload_encrypted")
+
   vehicleMake  String? @map("vehicle_make")
   vehicleModel String? @map("vehicle_model")
   vehicleColor String? @map("vehicle_color")

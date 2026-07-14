@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, useTransition, useActionState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, useActionState } from "react";
 import Link from "next/link";
 import { checkInAction, lookupGuestAction, type CheckInActionState } from "./actions";
 import { computeExpectedCheckOut, formatMoney, calculateAge, isExpired } from "@/lib/checkin/rate";
+import { parseAAMVA, looksLikeAAMVA } from "@/lib/aamva";
 
 type Property = {
   id: string;
@@ -36,7 +37,10 @@ type DuplicateGuest = {
   lastStayAt: Date | null;
 };
 
+type ScanMessage = { type: "success" | "warning" | "error"; text: string };
+
 const initialState: CheckInActionState = {};
+const SCAN_DEBOUNCE_MS = 150;
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -65,7 +69,9 @@ export function CheckInForm({
 
   const [roomId, setRoomId] = useState(preselectedRoomId ?? rooms[0]?.id ?? "");
   const [ratePlanId, setRatePlanId] = useState(ratePlans.find((r) => r.unit === "nightly")?.id ?? ratePlans[0]?.id ?? "");
+  const [idType, setIdType] = useState("drivers_license");
   const [idNumber, setIdNumber] = useState("");
+  const [idState, setIdState] = useState("");
   const [idExpiration, setIdExpiration] = useState("");
   const [dob, setDob] = useState("");
   const [dnrOverride, setDnrOverride] = useState(false);
@@ -75,6 +81,7 @@ export function CheckInForm({
   const [isLookingUp, startLookup] = useTransition();
 
   const [firstName, setFirstName] = useState("");
+  const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
   const [addressLine1, setAddressLine1] = useState("");
   const [city, setCity] = useState("");
@@ -82,24 +89,43 @@ export function CheckInForm({
   const [zip, setZip] = useState("");
   const [phone, setPhone] = useState("");
 
+  const [scanStripValue, setScanStripValue] = useState("");
+  const [rawAamvaPayload, setRawAamvaPayload] = useState("");
+  const [scanMessage, setScanMessage] = useState<ScanMessage | null>(null);
+  const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const selectedRatePlan = ratePlans.find((r) => r.id === ratePlanId);
-  const now = useMemo(() => new Date(), []);
+  // Read the clock only after mount — computing `new Date()` during SSR and
+  // again during client hydration produces two different timestamps and
+  // triggers a hydration mismatch.
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    // Intentional mount-only client read, not a sync with an external
+    // system — this is the standard fix for a hydration-mismatch on a
+    // value that must differ between server render and client render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNow(new Date());
+  }, []);
   const expectedCheckOut = useMemo(() => {
-    if (!selectedRatePlan) return null;
+    if (!selectedRatePlan || !now) return null;
     return computeExpectedCheckOut(selectedRatePlan, now, property.checkOutTime);
   }, [selectedRatePlan, now, property.checkOutTime]);
 
   const idExpiredWarning = idExpiration && isExpired(new Date(idExpiration));
   const under18Warning = dob && calculateAge(new Date(dob)) < 18;
 
-  function handleIdNumberBlur() {
-    const trimmed = idNumber.trim();
+  function runDuplicateLookup(rawIdNumber: string) {
+    const trimmed = rawIdNumber.trim();
     if (!trimmed || trimmed === checkedIdNumber) return;
     startLookup(async () => {
       const result = await lookupGuestAction(property.id, trimmed);
       setCheckedIdNumber(trimmed);
       setDuplicate(result);
     });
+  }
+
+  function handleIdNumberBlur() {
+    runDuplicateLookup(idNumber);
   }
 
   function loadDuplicateInfo() {
@@ -113,6 +139,61 @@ export function CheckInForm({
     setPhone(duplicate.phone ?? "");
   }
 
+  function handleScan(rawValue: string) {
+    const parsed = parseAAMVA(rawValue);
+    setRawAamvaPayload(rawValue);
+    setIdType("drivers_license");
+
+    if (parsed.firstName) setFirstName(parsed.firstName);
+    if (parsed.middleName) setMiddleName(parsed.middleName);
+    if (parsed.lastName) setLastName(parsed.lastName);
+    if (parsed.addressLine1) setAddressLine1(parsed.addressLine1);
+    if (parsed.city) setCity(parsed.city);
+    if (parsed.state) setAddrState(parsed.state);
+    if (parsed.zip) setZip(parsed.zip);
+    if (parsed.dob) setDob(parsed.dob);
+    if (parsed.idExpiration) setIdExpiration(parsed.idExpiration);
+    if (parsed.idNumber) {
+      setIdNumber(parsed.idNumber);
+      setIdState(parsed.state ?? "");
+      runDuplicateLookup(parsed.idNumber);
+    }
+
+    const fieldsFound = [parsed.firstName, parsed.lastName, parsed.idNumber].filter(Boolean).length;
+    if (fieldsFound === 0) {
+      setScanMessage({
+        type: "error",
+        text: "Couldn't read that scan. Check the fields below and fill in manually, or try scanning again.",
+      });
+    } else if (parsed.warnings.length > 0) {
+      setScanMessage({
+        type: "warning",
+        text: `Scanned ${parsed.firstName ?? ""} ${parsed.lastName ?? ""} — some fields may need review below.`,
+      });
+    } else {
+      setScanMessage({
+        type: "success",
+        text: `Scanned ${parsed.firstName} ${parsed.lastName} — please review the fields below.`,
+      });
+    }
+
+    setScanStripValue("");
+  }
+
+  function handleScanStripChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const value = e.target.value;
+    setScanStripValue(value);
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    // Keyboard-wedge scanners type the whole payload near-instantly (including
+    // any embedded newlines between AAMVA elements — a real Enter keystroke,
+    // not just a terminator) then stop. A short pause in typing is a reliable
+    // "scan finished" signal; we deliberately don't treat Enter itself as a
+    // trigger, since that fires mid-scan on the first embedded line break.
+    scanTimeoutRef.current = setTimeout(() => {
+      if (looksLikeAAMVA(value)) handleScan(value);
+    }, SCAN_DEBOUNCE_MS);
+  }
+
   const blockedByDnr = !!duplicate?.dnrFlag && !dnrOverride;
 
   return (
@@ -122,6 +203,7 @@ export function CheckInForm({
         <input type="hidden" name="roomId" value={roomId} />
         <input type="hidden" name="ratePlanId" value={ratePlanId} />
         <input type="hidden" name="dnrOverride" value={dnrOverride ? "on" : ""} />
+        <input type="hidden" name="rawAamvaPayload" value={rawAamvaPayload} />
 
         <div className="printable-card rounded-lg border-2 border-gray-800 bg-white p-6 text-gray-900 shadow-sm">
           {/* 1. Property header */}
@@ -135,13 +217,32 @@ export function CheckInForm({
 
           {/* 2. Scan strip */}
           <div className="no-print mt-4">
-            <input
-              type="text"
-              disabled
-              placeholder="Barcode scanning available in a future update — enter details manually below"
-              className="w-full rounded border border-dashed border-gray-300 bg-gray-50 px-2 py-2 text-sm text-gray-400"
+            <textarea
+              rows={1}
+              autoFocus
+              value={scanStripValue}
+              onChange={handleScanStripChange}
+              placeholder="Scan the back of the driver's license"
+              className="w-full resize-none overflow-hidden rounded border border-dashed border-gray-300 bg-gray-50 px-2 py-2 text-sm text-gray-600 focus:border-blue-400 focus:bg-white focus:outline-none"
             />
+            <p className="mt-1 text-[11px] text-gray-400">
+              No barcode? Just fill in the fields below manually — passports and foreign IDs are always manual entry.
+            </p>
           </div>
+          {scanMessage && (
+            <p
+              className={`no-print mt-2 text-sm font-medium ${
+                scanMessage.type === "error"
+                  ? "text-red-600"
+                  : scanMessage.type === "warning"
+                    ? "text-amber-600"
+                    : "text-green-700"
+              }`}
+            >
+              {scanMessage.type === "success" ? "✓ " : "⚠ "}
+              {scanMessage.text}
+            </p>
+          )}
 
           {/* Duplicate / DNR banner */}
           {isLookingUp && <p className="mt-3 text-xs text-gray-500">Checking for a returning guest…</p>}
@@ -173,7 +274,7 @@ export function CheckInForm({
               <input name="firstName" required value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inputClasses} />
             </Field>
             <Field label="Middle Name">
-              <input name="middleName" className={inputClasses} />
+              <input name="middleName" value={middleName} onChange={(e) => setMiddleName(e.target.value)} className={inputClasses} />
             </Field>
             <Field label="Last Name">
               <input name="lastName" required value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputClasses} />
@@ -209,7 +310,7 @@ export function CheckInForm({
           {/* 4. ID block */}
           <fieldset className="mt-4 grid grid-cols-2 gap-3 border-t border-gray-200 pt-3 sm:grid-cols-4">
             <Field label="ID Type">
-              <select name="idType" className={inputClasses} defaultValue="drivers_license">
+              <select name="idType" value={idType} onChange={(e) => setIdType(e.target.value)} className={inputClasses}>
                 <option value="drivers_license">Driver&apos;s License</option>
                 <option value="state_id">State ID</option>
                 <option value="passport">Passport</option>
@@ -226,7 +327,7 @@ export function CheckInForm({
               />
             </Field>
             <Field label="ID State">
-              <input name="idState" maxLength={2} className={inputClasses} />
+              <input name="idState" value={idState} onChange={(e) => setIdState(e.target.value)} maxLength={2} className={inputClasses} />
             </Field>
             <Field label="ID Expiration">
               <input
@@ -281,7 +382,7 @@ export function CheckInForm({
               </select>
             </Field>
             <Field label="Check-In">
-              <div className={`${inputClasses} bg-gray-50 text-gray-500`}>{now.toLocaleString()}</div>
+              <div className={`${inputClasses} bg-gray-50 text-gray-500`}>{now ? now.toLocaleString() : "—"}</div>
             </Field>
             <Field label="Expected Check-Out">
               <div className={`${inputClasses} bg-gray-50 text-gray-500`}>
