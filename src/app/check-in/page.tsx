@@ -18,7 +18,7 @@ export default async function CheckInPage({
     );
   }
 
-  const { vacantRooms, ratePlans, selectedRoom } = await getCheckInFormData(property.id, roomId);
+  const { vacantRooms, ratePlans, taxRules, selectedRoom } = await getCheckInFormData(property.id, roomId);
 
   return (
     <CheckInForm
@@ -40,6 +40,12 @@ export default async function CheckInPage({
         unit: rp.unit,
         durationUnits: rp.durationUnits,
         baseAmount: Number(rp.baseAmount),
+      }))}
+      taxRules={taxRules.map((tr) => ({
+        id: tr.id,
+        name: tr.name,
+        ratePercent: Number(tr.ratePercent),
+        appliesTo: tr.appliesTo,
       }))}
       preselectedRoomId={selectedRoom?.id}
     />

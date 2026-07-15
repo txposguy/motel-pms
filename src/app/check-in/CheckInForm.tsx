@@ -5,6 +5,7 @@ import Link from "next/link";
 import { checkInAction, lookupGuestAction, type CheckInActionState } from "./actions";
 import { computeExpectedCheckOut, formatMoney, calculateAge, isExpired } from "@/lib/checkin/rate";
 import { parseAAMVA, looksLikeAAMVA } from "@/lib/aamva";
+import { calculateTax, type TaxRuleInput } from "@/lib/tax";
 
 type Property = {
   id: string;
@@ -58,11 +59,13 @@ export function CheckInForm({
   property,
   rooms,
   ratePlans,
+  taxRules,
   preselectedRoomId,
 }: {
   property: Property;
   rooms: Room[];
   ratePlans: RatePlan[];
+  taxRules: TaxRuleInput[];
   preselectedRoomId?: string;
 }) {
   const [state, formAction, pending] = useActionState(checkInAction, initialState);
@@ -110,6 +113,13 @@ export function CheckInForm({
     if (!selectedRatePlan || !now) return null;
     return computeExpectedCheckOut(selectedRatePlan, now, property.checkOutTime);
   }, [selectedRatePlan, now, property.checkOutTime]);
+
+  const taxLines = useMemo(() => {
+    if (!selectedRatePlan) return [];
+    return calculateTax(selectedRatePlan.baseAmount, taxRules, "room_charge");
+  }, [selectedRatePlan, taxRules]);
+  const taxTotal = taxLines.reduce((sum, line) => sum + line.amount, 0);
+  const grandTotal = (selectedRatePlan?.baseAmount ?? 0) + taxTotal;
 
   const idExpiredWarning = idExpiration && isExpired(new Date(idExpiration));
   const under18Warning = dob && calculateAge(new Date(dob)) < 18;
@@ -403,13 +413,24 @@ export function CheckInForm({
           </fieldset>
 
           {/* 7. Rate block */}
-          <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-3 text-sm">
-            <span className="text-gray-600">
-              Room {rooms.find((r) => r.id === roomId)?.roomNumber ?? "—"} — {selectedRatePlan?.name ?? "—"}
-            </span>
-            <span className="font-bold">Total: {selectedRatePlan ? formatMoney(selectedRatePlan.baseAmount) : "—"}</span>
+          <div className="mt-4 border-t border-gray-200 pt-3 text-sm">
+            <div className="flex items-center justify-between text-gray-600">
+              <span>
+                Room {rooms.find((r) => r.id === roomId)?.roomNumber ?? "—"} — {selectedRatePlan?.name ?? "—"}
+              </span>
+              <span>{selectedRatePlan ? formatMoney(selectedRatePlan.baseAmount) : "—"}</span>
+            </div>
+            {taxLines.map((line) => (
+              <div key={line.taxRuleId} className="flex items-center justify-between text-gray-500">
+                <span>{line.description}</span>
+                <span>{formatMoney(line.amount)}</span>
+              </div>
+            ))}
+            <div className="mt-1 flex items-center justify-between border-t border-gray-200 pt-1 font-bold">
+              <span>Total</span>
+              <span>{selectedRatePlan ? formatMoney(grandTotal) : "—"}</span>
+            </div>
           </div>
-          <p className="text-right text-[11px] text-gray-400">Tax calculation coming in a future update.</p>
 
           {/* 8. Terms footer */}
           {property.registrationCardFooterText && (

@@ -72,21 +72,31 @@ export default async function Home() {
         {rooms.map((room) => {
           const style = STATUS_STYLES[room.status];
           const isVacant = VACANT_STATUSES.includes(room.status);
+          const activeStayId = room.stays[0]?.id;
+          const isClickable = isVacant || (room.status === "occupied" && activeStayId);
           const tile = (
-            <div className={`rounded-lg border-2 p-4 ${style.classes} ${isVacant ? "cursor-pointer transition hover:brightness-95" : ""}`}>
+            <div className={`rounded-lg border-2 p-4 ${style.classes} ${isClickable ? "cursor-pointer transition hover:brightness-95" : ""}`}>
               <div className="text-2xl font-bold">{room.roomNumber}</div>
               <div className="mt-1 text-xs font-medium uppercase tracking-wide">{style.label}</div>
               <div className="mt-2 text-xs opacity-75">{room.roomType.name}</div>
             </div>
           );
 
-          return isVacant ? (
-            <Link key={room.id} href={`/check-in?room=${room.id}`}>
-              {tile}
-            </Link>
-          ) : (
-            <div key={room.id}>{tile}</div>
-          );
+          if (isVacant) {
+            return (
+              <Link key={room.id} href={`/check-in?room=${room.id}`}>
+                {tile}
+              </Link>
+            );
+          }
+          if (room.status === "occupied" && activeStayId) {
+            return (
+              <Link key={room.id} href={`/stays/${activeStayId}`}>
+                {tile}
+              </Link>
+            );
+          }
+          return <div key={room.id}>{tile}</div>;
         })}
       </div>
     </main>

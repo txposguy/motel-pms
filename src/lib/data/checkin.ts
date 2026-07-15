@@ -1,10 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { encrypt, hashForLookup } from "@/lib/encryption";
 import { computeExpectedCheckOut } from "@/lib/checkin/rate";
+import { calculateTax } from "@/lib/tax";
+import { getActiveTaxRules } from "@/lib/data/tax";
 import type { IdType } from "@/generated/prisma/enums";
 
 export async function getCheckInFormData(propertyId: string, preselectedRoomId?: string) {
-  const [property, vacantRooms, ratePlans, selectedRoom] = await Promise.all([
+  const [property, vacantRooms, ratePlans, taxRules, selectedRoom] = await Promise.all([
     prisma.property.findUniqueOrThrow({ where: { id: propertyId } }),
     prisma.room.findMany({
       where: { propertyId, status: { in: ["vacant_clean", "vacant_dirty"] } },
@@ -15,12 +17,13 @@ export async function getCheckInFormData(propertyId: string, preselectedRoomId?:
       where: { propertyId, active: true },
       orderBy: { unit: "asc" },
     }),
+    getActiveTaxRules(propertyId, new Date()),
     preselectedRoomId
       ? prisma.room.findFirst({ where: { id: preselectedRoomId, propertyId } })
       : Promise.resolve(null),
   ]);
 
-  return { property, vacantRooms, ratePlans, selectedRoom };
+  return { property, vacantRooms, ratePlans, taxRules, selectedRoom };
 }
 
 export async function findGuestByIdNumber(propertyId: string, idNumber: string) {
@@ -103,6 +106,7 @@ export async function checkInGuest(input: CheckInInput) {
     property.checkOutTime
   );
   const businessDate = new Date(checkedInAt.toDateString());
+  const taxRules = await getActiveTaxRules(input.propertyId, checkedInAt);
 
   const result = await prisma.$transaction(async (tx) => {
     const guest = await tx.guest.create({
@@ -161,6 +165,21 @@ export async function checkInGuest(input: CheckInInput) {
         businessDate,
       },
     });
+
+    const taxLines = calculateTax(Number(ratePlan.baseAmount), taxRules, "room_charge");
+    for (const taxLine of taxLines) {
+      await tx.folioLine.create({
+        data: {
+          folioId: folio.id,
+          createdByUserId: actingUser.id,
+          type: "tax",
+          description: taxLine.description,
+          amount: taxLine.amount,
+          taxRuleId: taxLine.taxRuleId,
+          businessDate,
+        },
+      });
+    }
 
     await tx.room.update({
       where: { id: room.id },

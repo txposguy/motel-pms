@@ -51,17 +51,20 @@ async function main() {
     }),
   ]);
 
-  const roomPlan: { number: string; roomTypeId: string; status: "vacant_clean" | "vacant_dirty" | "occupied" | "out_of_order" }[] = [
-    { number: "101", roomTypeId: single.id, status: "occupied" },
+  // "occupied" is never seeded directly — that status should only ever come
+  // from a real check-in, otherwise the room rack links to a stay that
+  // doesn't exist. Vary clean/dirty/out-of-order for a realistic-looking rack.
+  const roomPlan: { number: string; roomTypeId: string; status: "vacant_clean" | "vacant_dirty" | "out_of_order" }[] = [
+    { number: "101", roomTypeId: single.id, status: "vacant_clean" },
     { number: "102", roomTypeId: single.id, status: "vacant_clean" },
     { number: "103", roomTypeId: single.id, status: "vacant_dirty" },
-    { number: "104", roomTypeId: double.id, status: "occupied" },
+    { number: "104", roomTypeId: double.id, status: "vacant_clean" },
     { number: "105", roomTypeId: double.id, status: "vacant_clean" },
     { number: "106", roomTypeId: single.id, status: "out_of_order" },
-    { number: "107", roomTypeId: single.id, status: "occupied" },
+    { number: "107", roomTypeId: single.id, status: "vacant_clean" },
     { number: "108", roomTypeId: double.id, status: "vacant_clean" },
     { number: "201", roomTypeId: single.id, status: "vacant_clean" },
-    { number: "202", roomTypeId: single.id, status: "occupied" },
+    { number: "202", roomTypeId: single.id, status: "vacant_clean" },
     { number: "203", roomTypeId: double.id, status: "vacant_dirty" },
     { number: "204", roomTypeId: double.id, status: "vacant_clean" },
   ];
@@ -69,7 +72,10 @@ async function main() {
   for (const r of roomPlan) {
     await prisma.room.upsert({
       where: { propertyId_roomNumber: { propertyId: property.id, roomNumber: r.number } },
-      update: { status: r.status },
+      // No `update` clause beyond identity fields — re-running the seed must
+      // never clobber a room's real, live status (e.g. a guest who is
+      // actually checked in) just because it was rerun for unrelated data.
+      update: {},
       create: {
         propertyId: property.id,
         roomTypeId: r.roomTypeId,
@@ -120,7 +126,35 @@ async function main() {
     });
   }
 
-  console.log(`Seeded property "${property.name}" with ${roomPlan.length} rooms and ${ratePlans.length} rate plans.`);
+  const taxRules: {
+    id: string;
+    name: string;
+    ratePercent: number;
+    appliesTo: "room_charge" | "incidental";
+    exemptAfterConsecutiveNights?: number;
+  }[] = [
+    { id: "seed-tax-state", name: "TX State Hotel Occupancy Tax", ratePercent: 6, appliesTo: "room_charge", exemptAfterConsecutiveNights: 30 },
+    { id: "seed-tax-city", name: "Katy Local Hotel Occupancy Tax", ratePercent: 7, appliesTo: "room_charge", exemptAfterConsecutiveNights: 30 },
+  ];
+
+  for (const tr of taxRules) {
+    await prisma.taxRule.upsert({
+      where: { id: tr.id },
+      update: {},
+      create: {
+        id: tr.id,
+        propertyId: property.id,
+        name: tr.name,
+        ratePercent: tr.ratePercent,
+        appliesTo: tr.appliesTo,
+        exemptAfterConsecutiveNights: tr.exemptAfterConsecutiveNights,
+      },
+    });
+  }
+
+  console.log(
+    `Seeded property "${property.name}" with ${roomPlan.length} rooms, ${ratePlans.length} rate plans, and ${taxRules.length} tax rules.`
+  );
 }
 
 main()

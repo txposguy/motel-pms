@@ -54,6 +54,7 @@ model Property {
   ratePlans RatePlan[]
   guests    Guest[]
   stays     Stay[]
+  taxRules  TaxRule[]
 
   @@map("properties")
 }
@@ -296,11 +297,45 @@ model FolioLine {
   createdByUserId String   @map("created_by_user_id")
   createdByUser   User     @relation(fields: [createdByUserId], references: [id])
 
-  type         FolioLineType
-  description  String
-  amount       Decimal       @db.Decimal(10, 2)
-  voidsLineId  String?       @map("voids_line_id")
-  businessDate DateTime      @map("business_date") @db.Date
+  type        FolioLineType
+  description String
+  amount      Decimal       @db.Decimal(10, 2)
+
+  taxRuleId String?  @map("tax_rule_id")
+  taxRule   TaxRule? @relation(fields: [taxRuleId], references: [id])
+
+  voidsLineId  String?  @map("voids_line_id")
+  businessDate DateTime @map("business_date") @db.Date
 
   @@map("folio_lines")
+}
+
+// --- Slice 4: Rates, folio & tax -----------------------------------------
+
+enum TaxAppliesTo {
+  room_charge
+  incidental
+}
+
+model TaxRule {
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  name        String
+  ratePercent Decimal      @map("rate_percent") @db.Decimal(5, 3)
+  appliesTo   TaxAppliesTo @map("applies_to")
+
+  // Set to 30 for the Texas permanent-resident HOT exemption. The exemption
+  // itself only fires during night audit (slice 9) — this column just holds
+  // the configured threshold.
+  exemptAfterConsecutiveNights Int? @map("exempt_after_consecutive_nights")
+
+  active        Boolean   @default(true)
+  effectiveFrom DateTime? @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+
+  folioLines FolioLine[]
+
+  @@map("tax_rules")
 }
