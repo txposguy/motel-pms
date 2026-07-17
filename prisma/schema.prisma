@@ -109,6 +109,7 @@ model User {
   checkedInStays  Stay[]      @relation("CheckedInBy")
   checkedOutStays Stay[]      @relation("CheckedOutBy")
   folioLines      FolioLine[]
+  payments        Payment[]
 
   @@map("users")
 }
@@ -281,7 +282,8 @@ model Folio {
   status   FolioStatus @default(open)
   closedAt DateTime?   @map("closed_at")
 
-  lines FolioLine[]
+  lines    FolioLine[]
+  payments Payment[]
 
   @@map("folios")
 }
@@ -338,4 +340,66 @@ model TaxRule {
   folioLines FolioLine[]
 
   @@map("tax_rules")
+}
+
+// --- Slice 5: Payment adapter (fake terminal for now) --------------------
+
+enum PaymentMethod {
+  cash
+  card
+  check
+  other
+}
+
+enum PaymentStatus {
+  pending
+  approved
+  declined
+  voided
+  refunded
+}
+
+enum PaymentProvider {
+  valor
+  dejavoo
+  none
+}
+
+model Payment {
+  id      String @id @default(cuid())
+  folioId String @map("folio_id")
+  folio   Folio  @relation(fields: [folioId], references: [id])
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  createdByUserId String   @map("created_by_user_id")
+  createdByUser   User     @relation(fields: [createdByUserId], references: [id])
+
+  method PaymentMethod
+
+  amountRequested Decimal  @map("amount_requested") @db.Decimal(10, 2)
+  amountSettled   Decimal? @map("amount_settled") @db.Decimal(10, 2)
+  cashDiscountFee Decimal? @map("cash_discount_fee") @db.Decimal(10, 2)
+
+  status   PaymentStatus
+  provider PaymentProvider @default(none)
+
+  providerTransactionId String? @map("provider_transaction_id")
+  providerRrn           String? @map("provider_rrn")
+  authCode              String? @map("auth_code")
+
+  maskedPan String? @map("masked_pan")
+  cardBrand String? @map("card_brand")
+  entryMode String? @map("entry_mode")
+
+  token String?
+
+  isPreauth         Boolean   @default(false) @map("is_preauth")
+  preauthCapturedAt DateTime? @map("preauth_captured_at")
+
+  // Always persist the provider's raw response — needed for dispute
+  // resolution and, right now, tagged `{ simulated: true }` by the fake
+  // terminal so it's obvious in the data which payments aren't real.
+  rawResponse Json? @map("raw_response")
+
+  @@map("payments")
 }

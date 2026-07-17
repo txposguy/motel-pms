@@ -39,6 +39,16 @@ export default async function StayPage({ params }: { params: Promise<{ stayId: s
           description: line.description,
           amount: Number(line.amount),
         })),
+        payments: stay.folio.payments.map((p) => ({
+          id: p.id,
+          createdAt: p.createdAt,
+          method: p.method,
+          amountRequested: Number(p.amountRequested),
+          amountSettled: p.amountSettled === null ? null : Number(p.amountSettled),
+          status: p.status,
+          cardBrand: p.cardBrand,
+          maskedPan: p.maskedPan,
+        })),
       }}
     />
   );

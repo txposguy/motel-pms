@@ -14,6 +14,7 @@ export async function getStayDetail(stayId: string, propertyId: string) {
       folio: {
         include: {
           lines: { orderBy: { createdAt: "desc" }, include: { taxRule: true } },
+          payments: { orderBy: { createdAt: "desc" } },
         },
       },
     },

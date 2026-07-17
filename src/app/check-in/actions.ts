@@ -2,6 +2,8 @@
 
 import { redirect } from "next/navigation";
 import { checkInGuest, findGuestByIdNumber, type CheckInInput } from "@/lib/data/checkin";
+import { takePayment } from "@/lib/data/payments";
+import { prisma } from "@/lib/prisma";
 import type { IdType } from "@/generated/prisma/enums";
 
 export async function lookupGuestAction(propertyId: string, idNumber: string) {
@@ -11,10 +13,7 @@ export async function lookupGuestAction(propertyId: string, idNumber: string) {
 
 export type CheckInActionState = { error?: string };
 
-export async function checkInAction(
-  _prevState: CheckInActionState,
-  formData: FormData
-): Promise<CheckInActionState> {
+async function parseAndValidate(formData: FormData): Promise<{ input: CheckInInput } | { error: string }> {
   const additionalGuestsRaw = String(formData.get("additionalGuests") || "");
   const additionalGuests = additionalGuestsRaw
     .split(",")
@@ -27,9 +26,7 @@ export async function checkInAction(
   if (idNumber) {
     const existing = await findGuestByIdNumber(String(formData.get("propertyId")), idNumber);
     if (existing?.dnrFlag && !dnrOverride) {
-      return {
-        error: `${existing.firstName} ${existing.lastName} is flagged Do Not Rent. Check-in blocked.`,
-      };
+      return { error: `${existing.firstName} ${existing.lastName} is flagged Do Not Rent. Check-in blocked.` };
     }
   }
 
@@ -62,21 +59,58 @@ export async function checkInAction(
     rawAamvaPayload: String(formData.get("rawAamvaPayload") || "").trim() || undefined,
   };
 
-  if (!input.firstName || !input.lastName) {
-    return { error: "First and last name are required." };
-  }
-  if (!input.roomId) {
-    return { error: "Select a room." };
-  }
-  if (!input.ratePlanId) {
-    return { error: "Select a rate plan." };
-  }
+  if (!input.firstName || !input.lastName) return { error: "First and last name are required." };
+  if (!input.roomId) return { error: "Select a room." };
+  if (!input.ratePlanId) return { error: "Select a rate plan." };
+
+  return { input };
+}
+
+export async function checkInAction(
+  _prevState: CheckInActionState,
+  formData: FormData
+): Promise<CheckInActionState> {
+  const parsed = await parseAndValidate(formData);
+  if ("error" in parsed) return parsed;
 
   try {
-    await checkInGuest(input);
+    await checkInGuest(parsed.input);
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Check-in failed." };
   }
 
   redirect("/");
+}
+
+export async function checkInAndPayAction(
+  _prevState: CheckInActionState,
+  formData: FormData
+): Promise<CheckInActionState> {
+  const parsed = await parseAndValidate(formData);
+  if ("error" in parsed) return parsed;
+
+  let stayId: string;
+  try {
+    const result = await checkInGuest(parsed.input);
+    stayId = result.stay.id;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Check-in failed." };
+  }
+
+  // Check-in itself always succeeds once we've decided to rent the room —
+  // a declined or timed-out payment doesn't un-rent it. The clerk resolves
+  // payment from the folio screen we redirect to below either way.
+  const folio = await prisma.folio.findFirstOrThrow({
+    where: { stayId },
+    include: { lines: true },
+  });
+  const totalDue = folio.lines.reduce((sum, line) => sum + Number(line.amount), 0);
+
+  try {
+    await takePayment({ propertyId: parsed.input.propertyId, folioId: folio.id, method: "card", amount: totalDue });
+  } catch {
+    // Fall through — the folio screen will show the failed/pending payment.
+  }
+
+  redirect(`/stays/${stayId}`);
 }

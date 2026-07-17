@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition, useActionState } from "react";
 import Link from "next/link";
-import { checkInAction, lookupGuestAction, type CheckInActionState } from "./actions";
+import { checkInAction, checkInAndPayAction, lookupGuestAction, type CheckInActionState } from "./actions";
 import { computeExpectedCheckOut, formatMoney, calculateAge, isExpired } from "@/lib/checkin/rate";
 import { parseAAMVA, looksLikeAAMVA } from "@/lib/aamva";
 import { calculateTax, type TaxRuleInput } from "@/lib/tax";
@@ -69,6 +69,7 @@ export function CheckInForm({
   preselectedRoomId?: string;
 }) {
   const [state, formAction, pending] = useActionState(checkInAction, initialState);
+  const [payState, payFormAction, payPending] = useActionState(checkInAndPayAction, initialState);
 
   const [roomId, setRoomId] = useState(preselectedRoomId ?? rooms[0]?.id ?? "");
   const [ratePlanId, setRatePlanId] = useState(ratePlans.find((r) => r.unit === "nightly")?.id ?? ratePlans[0]?.id ?? "");
@@ -441,17 +442,17 @@ export function CheckInForm({
         {/* 9. Buttons */}
         <div className="no-print mt-4 flex flex-wrap items-center gap-3">
           <button
-            type="button"
-            disabled
-            title="Coming with the payment integration (slice 5)"
-            className="cursor-not-allowed rounded-md bg-gray-300 px-4 py-2 text-sm font-semibold text-gray-500"
+            type="submit"
+            formAction={payFormAction}
+            disabled={payPending || pending || blockedByDnr || rooms.length === 0}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
           >
-            CHECK IN & TAKE PAYMENT
+            {payPending ? "Checking in…" : "CHECK IN & TAKE PAYMENT"}
           </button>
           <button
             type="submit"
-            disabled={pending || blockedByDnr || rooms.length === 0}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+            disabled={pending || payPending || blockedByDnr || rooms.length === 0}
+            className="rounded-md border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-gray-300 disabled:text-gray-400"
           >
             {pending ? "Checking in…" : "CHECK IN — BILL LATER"}
           </button>
@@ -467,7 +468,9 @@ export function CheckInForm({
           </Link>
         </div>
 
-        {state.error && <p className="no-print mt-2 text-sm font-semibold text-red-600">{state.error}</p>}
+        {(state.error || payState.error) && (
+          <p className="no-print mt-2 text-sm font-semibold text-red-600">{state.error || payState.error}</p>
+        )}
       </form>
     </main>
   );

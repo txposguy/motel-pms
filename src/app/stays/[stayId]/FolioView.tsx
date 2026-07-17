@@ -2,7 +2,13 @@
 
 import { useActionState, useState } from "react";
 import Link from "next/link";
-import { addChargeAction, extendStayAction, type FolioActionState } from "./actions";
+import {
+  addChargeAction,
+  extendStayAction,
+  reconcilePaymentAction,
+  takePaymentAction,
+  type FolioActionState,
+} from "./actions";
 import { formatMoney } from "@/lib/checkin/rate";
 
 type Property = { name: string; address: string; city: string; state: string; zip: string; phone: string };
@@ -30,7 +36,18 @@ type FolioLine = {
   amount: number;
 };
 
-type Folio = { id: string; status: string; lines: FolioLine[] };
+type Payment = {
+  id: string;
+  createdAt: Date;
+  method: string;
+  amountRequested: number;
+  amountSettled: number | null;
+  status: string;
+  cardBrand: string | null;
+  maskedPan: string | null;
+};
+
+type Folio = { id: string; status: string; lines: FolioLine[]; payments: Payment[] };
 
 const initialState: FolioActionState = {};
 
@@ -40,6 +57,14 @@ const TYPE_LABELS: Record<string, string> = {
   incidental: "Incidental",
   adjustment: "Adjustment",
   void: "Void",
+};
+
+const PAYMENT_STATUS_STYLES: Record<string, string> = {
+  approved: "bg-green-100 text-green-800",
+  pending: "bg-amber-100 text-amber-800",
+  declined: "bg-red-100 text-red-800",
+  voided: "bg-gray-100 text-gray-600",
+  refunded: "bg-gray-100 text-gray-600",
 };
 
 export function FolioView({
@@ -55,10 +80,18 @@ export function FolioView({
 }) {
   const [showAddCharge, setShowAddCharge] = useState(false);
   const [showExtend, setShowExtend] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
   const [addChargeState, addChargeFormAction, addChargePending] = useActionState(addChargeAction, initialState);
   const [extendState, extendFormAction, extendPending] = useActionState(extendStayAction, initialState);
+  const [payState, payFormAction, payPending] = useActionState(takePaymentAction, initialState);
+  const [reconcileState, reconcileFormAction, reconcilePending] = useActionState(reconcilePaymentAction, initialState);
 
-  const balance = folio.lines.reduce((sum, line) => sum + line.amount, 0);
+  const charges = folio.lines.reduce((sum, line) => sum + line.amount, 0);
+  const paid = folio.payments
+    .filter((p) => p.status === "approved")
+    .reduce((sum, p) => sum + (p.amountSettled ?? 0), 0);
+  const balance = charges - paid;
+  const hasPendingPayment = folio.payments.some((p) => p.status === "pending");
   const extendUnitLabel = stay.ratePlanUnit === "hourly" ? "block" : stay.ratePlanUnit === "weekly" ? "week" : "night";
 
   return (
@@ -108,6 +141,11 @@ export function FolioView({
             <span className="text-sm font-semibold text-gray-600">Balance Due</span>
             <span className="text-2xl font-bold">{formatMoney(balance)}</span>
           </div>
+          {hasPendingPayment && (
+            <p className="mt-1 text-sm font-semibold text-amber-600">
+              ⚠ Payment status unknown for one or more attempts — check the terminal screen, then use RECONCILE below.
+            </p>
+          )}
 
           <table className="mt-3 w-full text-sm">
             <thead>
@@ -134,6 +172,57 @@ export function FolioView({
               ))}
             </tbody>
           </table>
+
+          {folio.payments.length > 0 && (
+            <>
+              <div className="mt-5 border-t border-gray-200 pt-3 text-sm font-semibold text-gray-600">Payments</div>
+              <table className="mt-2 w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="py-1.5">Date</th>
+                    <th className="py-1.5">Method</th>
+                    <th className="py-1.5">Status</th>
+                    <th className="py-1.5 text-right">Amount</th>
+                    <th className="no-print py-1.5"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {folio.payments.map((p) => (
+                    <tr key={p.id} className="border-b border-gray-100">
+                      <td className="py-1.5 text-gray-500">{p.createdAt.toLocaleString()}</td>
+                      <td className="py-1.5 capitalize">
+                        {p.method}
+                        {p.cardBrand && p.maskedPan && <span className="text-gray-400"> · {p.cardBrand} {p.maskedPan.slice(-4)}</span>}
+                      </td>
+                      <td className="py-1.5">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${PAYMENT_STATUS_STYLES[p.status] ?? ""}`}>
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-right">{formatMoney(p.amountSettled ?? p.amountRequested)}</td>
+                      <td className="no-print py-1.5 text-right">
+                        {p.status === "pending" && (
+                          <form action={reconcileFormAction} className="inline">
+                            <input type="hidden" name="propertyId" value={propertyId} />
+                            <input type="hidden" name="stayId" value={stay.id} />
+                            <input type="hidden" name="paymentId" value={p.id} />
+                            <button
+                              type="submit"
+                              disabled={reconcilePending}
+                              className="rounded border border-amber-500 px-2 py-0.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+                            >
+                              {reconcilePending ? "Checking…" : "RECONCILE"}
+                            </button>
+                          </form>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {reconcileState.error && <p className="no-print mt-1 text-sm font-semibold text-red-600">{reconcileState.error}</p>}
+            </>
+          )}
         </div>
 
         <div className="no-print mt-4 flex flex-wrap items-center gap-3">
@@ -151,7 +240,12 @@ export function FolioView({
           >
             EXTEND STAY
           </button>
-          <button type="button" disabled title="Coming with the payment integration (slice 5)" className="cursor-not-allowed rounded-md bg-gray-300 px-4 py-2 text-sm font-semibold text-gray-500">
+          <button
+            type="button"
+            onClick={() => setShowPayment((v) => !v)}
+            disabled={balance <= 0}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+          >
             ADD PAYMENT
           </button>
           <button type="button" disabled title="Not built yet" className="cursor-not-allowed rounded-md bg-gray-300 px-4 py-2 text-sm font-semibold text-gray-500">
@@ -174,6 +268,39 @@ export function FolioView({
             Back to Room Rack
           </Link>
         </div>
+
+        {showPayment && (
+          <form action={payFormAction} className="no-print mt-3 flex flex-wrap items-end gap-3 rounded-md border border-gray-300 bg-white p-4">
+            <input type="hidden" name="propertyId" value={propertyId} />
+            <input type="hidden" name="stayId" value={stay.id} />
+            <input type="hidden" name="folioId" value={folio.id} />
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Method</span>
+              <select name="method" defaultValue="card" className="rounded border border-gray-400 px-2 py-1.5 text-sm">
+                <option value="card">Card</option>
+                <option value="cash">Cash</option>
+                <option value="check">Check</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Amount</span>
+              <input
+                name="amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                defaultValue={balance > 0 ? balance.toFixed(2) : undefined}
+                className="w-28 rounded border border-gray-400 px-2 py-1.5 text-sm"
+                required
+              />
+            </label>
+            <button type="submit" disabled={payPending} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+              {payPending ? "Processing…" : "Take Payment"}
+            </button>
+            {payState.error && <p className="w-full text-sm font-semibold text-red-600">{payState.error}</p>}
+          </form>
+        )}
 
         {showAddCharge && (
           <form action={addChargeFormAction} className="no-print mt-3 flex flex-wrap items-end gap-3 rounded-md border border-gray-300 bg-white p-4">
