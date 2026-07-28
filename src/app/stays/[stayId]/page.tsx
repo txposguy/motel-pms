@@ -48,6 +48,8 @@ export default async function StayPage({ params }: { params: Promise<{ stayId: s
           status: p.status,
           cardBrand: p.cardBrand,
           maskedPan: p.maskedPan,
+          isPreauth: p.isPreauth,
+          preauthCapturedAt: p.preauthCapturedAt,
         })),
       }}
     />

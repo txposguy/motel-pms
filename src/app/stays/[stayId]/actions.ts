@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { addIncidentalCharge, extendStay } from "@/lib/data/folio";
-import { reconcilePayment, takePayment } from "@/lib/data/payments";
+import { capturePreAuth, reconcilePayment, takePayment, takePreAuth, voidPreAuth } from "@/lib/data/payments";
+import { checkOutStay } from "@/lib/data/checkout";
 
 export type FolioActionState = { error?: string };
 
@@ -66,6 +68,81 @@ export async function reconcilePaymentAction(
 
   revalidatePath(`/stays/${stayId}`);
   return {};
+}
+
+export async function takePreAuthAction(
+  _prevState: FolioActionState,
+  formData: FormData
+): Promise<FolioActionState> {
+  const propertyId = String(formData.get("propertyId") || "");
+  const stayId = String(formData.get("stayId") || "");
+  const folioId = String(formData.get("folioId") || "");
+  const amount = Number(formData.get("amount"));
+
+  if (!Number.isFinite(amount) || amount <= 0) return { error: "Enter a valid amount." };
+
+  try {
+    await takePreAuth({ propertyId, folioId, amount });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not authorize card." };
+  }
+
+  revalidatePath(`/stays/${stayId}`);
+  return {};
+}
+
+export async function capturePreAuthAction(
+  _prevState: FolioActionState,
+  formData: FormData
+): Promise<FolioActionState> {
+  const propertyId = String(formData.get("propertyId") || "");
+  const stayId = String(formData.get("stayId") || "");
+  const paymentId = String(formData.get("paymentId") || "");
+
+  try {
+    await capturePreAuth({ propertyId, paymentId });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not capture pre-authorization." };
+  }
+
+  revalidatePath(`/stays/${stayId}`);
+  return {};
+}
+
+export async function voidPreAuthAction(
+  _prevState: FolioActionState,
+  formData: FormData
+): Promise<FolioActionState> {
+  const propertyId = String(formData.get("propertyId") || "");
+  const stayId = String(formData.get("stayId") || "");
+  const paymentId = String(formData.get("paymentId") || "");
+
+  try {
+    await voidPreAuth({ propertyId, paymentId });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not void pre-authorization." };
+  }
+
+  revalidatePath(`/stays/${stayId}`);
+  return {};
+}
+
+export async function checkOutAction(
+  _prevState: FolioActionState,
+  formData: FormData
+): Promise<FolioActionState> {
+  const propertyId = String(formData.get("propertyId") || "");
+  const stayId = String(formData.get("stayId") || "");
+  const override = formData.get("override") === "on";
+  const overrideReason = String(formData.get("overrideReason") || "").trim() || undefined;
+
+  try {
+    await checkOutStay({ propertyId, stayId, override, overrideReason });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not check out." };
+  }
+
+  redirect("/");
 }
 
 export async function extendStayAction(

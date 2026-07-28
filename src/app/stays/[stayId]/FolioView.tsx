@@ -4,12 +4,17 @@ import { useActionState, useState } from "react";
 import Link from "next/link";
 import {
   addChargeAction,
+  capturePreAuthAction,
+  checkOutAction,
   extendStayAction,
   reconcilePaymentAction,
   takePaymentAction,
+  takePreAuthAction,
+  voidPreAuthAction,
   type FolioActionState,
 } from "./actions";
 import { formatMoney } from "@/lib/checkin/rate";
+import { computeBalance, computePaidAmount } from "@/lib/folio/balance";
 
 type Property = { name: string; address: string; city: string; state: string; zip: string; phone: string };
 
@@ -45,6 +50,8 @@ type Payment = {
   status: string;
   cardBrand: string | null;
   maskedPan: string | null;
+  isPreauth: boolean;
+  preauthCapturedAt: Date | null;
 };
 
 type Folio = { id: string; status: string; lines: FolioLine[]; payments: Payment[] };
@@ -81,17 +88,24 @@ export function FolioView({
   const [showAddCharge, setShowAddCharge] = useState(false);
   const [showExtend, setShowExtend] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [showCheckOut, setShowCheckOut] = useState(false);
+  const [checkOutOverride, setCheckOutOverride] = useState(false);
+
   const [addChargeState, addChargeFormAction, addChargePending] = useActionState(addChargeAction, initialState);
   const [extendState, extendFormAction, extendPending] = useActionState(extendStayAction, initialState);
   const [payState, payFormAction, payPending] = useActionState(takePaymentAction, initialState);
+  const [preAuthState, preAuthFormAction, preAuthPending] = useActionState(takePreAuthAction, initialState);
   const [reconcileState, reconcileFormAction, reconcilePending] = useActionState(reconcilePaymentAction, initialState);
+  const [captureState, captureFormAction, capturePending] = useActionState(capturePreAuthAction, initialState);
+  const [voidState, voidFormAction, voidPending] = useActionState(voidPreAuthAction, initialState);
+  const [checkOutState, checkOutFormAction, checkOutPending] = useActionState(checkOutAction, initialState);
 
+  const isOpen = folio.status === "open";
   const charges = folio.lines.reduce((sum, line) => sum + line.amount, 0);
-  const paid = folio.payments
-    .filter((p) => p.status === "approved")
-    .reduce((sum, p) => sum + (p.amountSettled ?? 0), 0);
-  const balance = charges - paid;
+  const balance = computeBalance(charges, folio.payments);
+  const paid = computePaidAmount(folio.payments);
   const hasPendingPayment = folio.payments.some((p) => p.status === "pending");
+  const openPreauth = folio.payments.find((p) => p.isPreauth && p.status === "approved" && !p.preauthCapturedAt);
   const extendUnitLabel = stay.ratePlanUnit === "hourly" ? "block" : stay.ratePlanUnit === "weekly" ? "week" : "night";
 
   return (
@@ -105,8 +119,12 @@ export function FolioView({
                 {property.address}, {property.city}, {property.state} {property.zip} · {property.phone}
               </p>
             </div>
-            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-blue-800">
-              {stay.status === "in_house" ? "In House" : stay.status}
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                isOpen ? "bg-blue-100 text-blue-800" : "bg-gray-200 text-gray-600"
+              }`}
+            >
+              {stay.status === "in_house" ? "In House" : stay.status === "checked_out" ? "Checked Out" : stay.status}
             </span>
           </div>
 
@@ -144,6 +162,11 @@ export function FolioView({
           {hasPendingPayment && (
             <p className="mt-1 text-sm font-semibold text-amber-600">
               ⚠ Payment status unknown for one or more attempts — check the terminal screen, then use RECONCILE below.
+            </p>
+          )}
+          {openPreauth && (
+            <p className="mt-1 text-sm font-semibold text-gray-500">
+              {formatMoney(openPreauth.amountRequested)} held via pre-authorization, not yet captured.
             </p>
           )}
 
@@ -192,15 +215,19 @@ export function FolioView({
                       <td className="py-1.5 text-gray-500">{p.createdAt.toLocaleString()}</td>
                       <td className="py-1.5 capitalize">
                         {p.method}
+                        {p.isPreauth && <span className="ml-1 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-700">Pre-Auth</span>}
                         {p.cardBrand && p.maskedPan && <span className="text-gray-400"> · {p.cardBrand} {p.maskedPan.slice(-4)}</span>}
                       </td>
                       <td className="py-1.5">
                         <span className={`rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${PAYMENT_STATUS_STYLES[p.status] ?? ""}`}>
                           {p.status}
                         </span>
+                        {p.isPreauth && p.status === "approved" && p.preauthCapturedAt && (
+                          <span className="ml-1 text-[10px] text-gray-400">captured</span>
+                        )}
                       </td>
                       <td className="py-1.5 text-right">{formatMoney(p.amountSettled ?? p.amountRequested)}</td>
-                      <td className="no-print py-1.5 text-right">
+                      <td className="no-print py-1.5 text-right whitespace-nowrap">
                         {p.status === "pending" && (
                           <form action={reconcileFormAction} className="inline">
                             <input type="hidden" name="propertyId" value={propertyId} />
@@ -215,12 +242,44 @@ export function FolioView({
                             </button>
                           </form>
                         )}
+                        {p.isPreauth && p.status === "approved" && !p.preauthCapturedAt && isOpen && (
+                          <span className="inline-flex gap-1">
+                            <form action={captureFormAction} className="inline">
+                              <input type="hidden" name="propertyId" value={propertyId} />
+                              <input type="hidden" name="stayId" value={stay.id} />
+                              <input type="hidden" name="paymentId" value={p.id} />
+                              <button
+                                type="submit"
+                                disabled={capturePending}
+                                className="rounded border border-green-600 px-2 py-0.5 text-xs font-semibold text-green-700 hover:bg-green-50"
+                              >
+                                Capture
+                              </button>
+                            </form>
+                            <form action={voidFormAction} className="inline">
+                              <input type="hidden" name="propertyId" value={propertyId} />
+                              <input type="hidden" name="stayId" value={stay.id} />
+                              <input type="hidden" name="paymentId" value={p.id} />
+                              <button
+                                type="submit"
+                                disabled={voidPending}
+                                className="rounded border border-red-500 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                              >
+                                Void
+                              </button>
+                            </form>
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {reconcileState.error && <p className="no-print mt-1 text-sm font-semibold text-red-600">{reconcileState.error}</p>}
+              {(reconcileState.error || captureState.error || voidState.error) && (
+                <p className="no-print mt-1 text-sm font-semibold text-red-600">
+                  {reconcileState.error || captureState.error || voidState.error}
+                </p>
+              )}
             </>
           )}
         </div>
@@ -229,21 +288,23 @@ export function FolioView({
           <button
             type="button"
             onClick={() => setShowAddCharge((v) => !v)}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            disabled={!isOpen}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             ADD CHARGE
           </button>
           <button
             type="button"
             onClick={() => setShowExtend((v) => !v)}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            disabled={!isOpen}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             EXTEND STAY
           </button>
           <button
             type="button"
             onClick={() => setShowPayment((v) => !v)}
-            disabled={balance <= 0}
+            disabled={!isOpen || balance <= 0}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
           >
             ADD PAYMENT
@@ -254,7 +315,12 @@ export function FolioView({
           <button type="button" disabled title="Not built yet" className="cursor-not-allowed rounded-md bg-gray-300 px-4 py-2 text-sm font-semibold text-gray-500">
             ADJUST
           </button>
-          <button type="button" disabled title="Coming in slice 6" className="cursor-not-allowed rounded-md bg-gray-300 px-4 py-2 text-sm font-semibold text-gray-500">
+          <button
+            type="button"
+            onClick={() => setShowCheckOut((v) => !v)}
+            disabled={!isOpen}
+            className="rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
             CHECK OUT
           </button>
           <button
@@ -270,7 +336,7 @@ export function FolioView({
         </div>
 
         {showPayment && (
-          <form action={payFormAction} className="no-print mt-3 flex flex-wrap items-end gap-3 rounded-md border border-gray-300 bg-white p-4">
+          <form className="no-print mt-3 flex flex-wrap items-end gap-3 rounded-md border border-gray-300 bg-white p-4">
             <input type="hidden" name="propertyId" value={propertyId} />
             <input type="hidden" name="stayId" value={stay.id} />
             <input type="hidden" name="folioId" value={folio.id} />
@@ -295,10 +361,21 @@ export function FolioView({
                 required
               />
             </label>
-            <button type="submit" disabled={payPending} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+            <button type="submit" formAction={payFormAction} disabled={payPending || preAuthPending} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
               {payPending ? "Processing…" : "Take Payment"}
             </button>
-            {payState.error && <p className="w-full text-sm font-semibold text-red-600">{payState.error}</p>}
+            <button
+              type="submit"
+              formAction={preAuthFormAction}
+              disabled={payPending || preAuthPending}
+              title="Authorize now, capture at check-out"
+              className="rounded-md border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50"
+            >
+              {preAuthPending ? "Authorizing…" : "Authorize Only"}
+            </button>
+            {(payState.error || preAuthState.error) && (
+              <p className="w-full text-sm font-semibold text-red-600">{payState.error || preAuthState.error}</p>
+            )}
           </form>
         )}
 
@@ -333,6 +410,51 @@ export function FolioView({
               {extendPending ? "Extending…" : "Extend"}
             </button>
             {extendState.error && <p className="w-full text-sm font-semibold text-red-600">{extendState.error}</p>}
+          </form>
+        )}
+
+        {showCheckOut && (
+          <form action={checkOutFormAction} className="no-print mt-3 flex flex-col gap-3 rounded-md border border-gray-300 bg-white p-4">
+            <input type="hidden" name="propertyId" value={propertyId} />
+            <input type="hidden" name="stayId" value={stay.id} />
+            <input type="hidden" name="override" value={checkOutOverride ? "on" : ""} />
+
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-semibold text-gray-600">Balance due at check-out</span>
+              <span className="text-lg font-bold">{formatMoney(balance)}</span>
+            </div>
+            {paid > 0 && <p className="text-xs text-gray-400">{formatMoney(paid)} already paid.</p>}
+
+            {balance > 0 && (
+              <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+                <p className="font-semibold text-amber-800">
+                  There&apos;s a balance due. Take a payment above first, or check out anyway with an owner override.
+                </p>
+                <label className="mt-2 flex items-center gap-2">
+                  <input type="checkbox" checked={checkOutOverride} onChange={(e) => setCheckOutOverride(e.target.checked)} />
+                  Owner override entered — check out with balance due
+                </label>
+                {checkOutOverride && (
+                  <input
+                    name="overrideReason"
+                    placeholder="Reason (required)"
+                    required
+                    className="mt-2 w-full rounded border border-gray-400 px-2 py-1.5 text-sm"
+                  />
+                )}
+              </div>
+            )}
+
+            <div>
+              <button
+                type="submit"
+                disabled={checkOutPending || (balance > 0 && !checkOutOverride)}
+                className="rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                {checkOutPending ? "Checking out…" : "Confirm Check-Out"}
+              </button>
+            </div>
+            {checkOutState.error && <p className="text-sm font-semibold text-red-600">{checkOutState.error}</p>}
           </form>
         )}
       </div>

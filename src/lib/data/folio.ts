@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { calculateTax } from "@/lib/tax";
 import { getActiveTaxRules } from "@/lib/data/tax";
 import { computeExpectedCheckOut } from "@/lib/checkin/rate";
+import { getActingUser } from "@/lib/data/actingUser";
 
 export async function getStayDetail(stayId: string, propertyId: string) {
   return prisma.stay.findFirst({
@@ -19,10 +20,6 @@ export async function getStayDetail(stayId: string, propertyId: string) {
       },
     },
   });
-}
-
-async function getActingUser(propertyId: string) {
-  return prisma.user.findFirstOrThrow({ where: { propertyId, role: "owner" } });
 }
 
 export async function addIncidentalCharge(input: {

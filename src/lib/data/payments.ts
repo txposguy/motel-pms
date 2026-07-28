@@ -2,15 +2,12 @@ import { prisma } from "@/lib/prisma";
 import { fakeTerminal } from "@/lib/payments/fakeTerminal";
 import type { PaymentTerminal, TxnResult } from "@/lib/payments/terminal";
 import type { Prisma } from "@/generated/prisma/client";
+import { getActingUser } from "@/lib/data/actingUser";
 
 // Swap this for the real Valor adapter once there's a demo terminal + the
 // ValorPay POS Integration Specification in hand — nothing else in this
 // file (or anywhere else that takes a payment) needs to change.
 const terminal: PaymentTerminal = fakeTerminal;
-
-async function getActingUser(propertyId: string) {
-  return prisma.user.findFirstOrThrow({ where: { propertyId, role: "owner" } });
-}
 
 function mapTxnStatus(status: TxnResult["status"]): "approved" | "declined" | "voided" {
   if (status === "approved") return "approved";
@@ -141,4 +138,111 @@ export async function reconcilePayment(input: { propertyId: string; paymentId: s
   const actingUser = await getActingUser(input.propertyId);
   const result = await terminal.status(payment.folioId.slice(0, 24));
   return applyTerminalResult(payment.id, input.propertyId, actingUser.id, result);
+}
+
+export async function takePreAuth(input: { propertyId: string; folioId: string; amount: number }) {
+  if (!Number.isFinite(input.amount) || input.amount <= 0) throw new Error("Enter a valid amount.");
+
+  const folio = await prisma.folio.findFirstOrThrow({ where: { id: input.folioId } });
+  if (folio.status !== "open") throw new Error("This folio is closed.");
+
+  const actingUser = await getActingUser(input.propertyId);
+
+  const payment = await prisma.payment.create({
+    data: {
+      folioId: folio.id,
+      createdByUserId: actingUser.id,
+      method: "card",
+      amountRequested: input.amount,
+      status: "pending",
+      provider: "valor",
+      isPreauth: true,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      propertyId: input.propertyId,
+      userId: actingUser.id,
+      entityType: "payment",
+      entityId: payment.id,
+      action: "preauth_initiated",
+      after: { amount: input.amount },
+    },
+  });
+
+  const amountCents = Math.round(input.amount * 100);
+  const result = await terminal.preAuth({ amountCents, invoiceNumber: folio.id.slice(0, 24) });
+
+  return applyTerminalResult(payment.id, input.propertyId, actingUser.id, result);
+}
+
+export async function capturePreAuth(input: { propertyId: string; paymentId: string; amount?: number }) {
+  const payment = await prisma.payment.findFirstOrThrow({ where: { id: input.paymentId } });
+  if (!payment.isPreauth) throw new Error("This payment is not a pre-authorization.");
+  if (payment.status !== "approved") throw new Error("Only an approved pre-authorization can be captured.");
+  if (payment.preauthCapturedAt) throw new Error("This pre-authorization has already been captured.");
+  if (!payment.providerTransactionId) throw new Error("Missing transaction reference for this pre-authorization.");
+
+  const actingUser = await getActingUser(input.propertyId);
+  const captureAmount = input.amount ?? Number(payment.amountRequested);
+  const amountCents = Math.round(captureAmount * 100);
+
+  const result = await terminal.capture({ transactionId: payment.providerTransactionId, amountCents });
+
+  const updated = await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      status: result.status === "approved" ? "approved" : "declined",
+      amountSettled: result.amountSettled / 100,
+      preauthCapturedAt: result.status === "approved" ? new Date() : null,
+      rawResponse: result.raw as Prisma.InputJsonValue,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      propertyId: input.propertyId,
+      userId: actingUser.id,
+      entityType: "payment",
+      entityId: payment.id,
+      action: "preauth_captured",
+      after: { amountSettled: result.amountSettled },
+    },
+  });
+
+  return updated;
+}
+
+export async function voidPreAuth(input: { propertyId: string; paymentId: string }) {
+  const payment = await prisma.payment.findFirstOrThrow({ where: { id: input.paymentId } });
+  if (!payment.isPreauth) throw new Error("This payment is not a pre-authorization.");
+  if (payment.status !== "approved") throw new Error("Only an approved pre-authorization can be voided.");
+  if (payment.preauthCapturedAt) throw new Error("This pre-authorization has already been captured — use refund instead.");
+  if (!payment.providerTransactionId) throw new Error("Missing transaction reference for this pre-authorization.");
+
+  const actingUser = await getActingUser(input.propertyId);
+  const result = await terminal.void({ transactionId: payment.providerTransactionId });
+
+  const updated = await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      status: "voided",
+      amountSettled: 0,
+      rawResponse: result.raw as Prisma.InputJsonValue,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      propertyId: input.propertyId,
+      userId: actingUser.id,
+      entityType: "payment",
+      entityId: payment.id,
+      action: "preauth_voided",
+      after: {},
+    },
+  });
+
+  return updated;
 }

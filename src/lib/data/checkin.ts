@@ -3,6 +3,7 @@ import { encrypt, hashForLookup } from "@/lib/encryption";
 import { computeExpectedCheckOut } from "@/lib/checkin/rate";
 import { calculateTax } from "@/lib/tax";
 import { getActiveTaxRules } from "@/lib/data/tax";
+import { getActingUser } from "@/lib/data/actingUser";
 import type { IdType } from "@/generated/prisma/enums";
 
 export async function getCheckInFormData(propertyId: string, preselectedRoomId?: string) {
@@ -92,7 +93,7 @@ export async function checkInGuest(input: CheckInInput) {
     prisma.property.findUniqueOrThrow({ where: { id: input.propertyId } }),
     prisma.room.findFirstOrThrow({ where: { id: input.roomId, propertyId: input.propertyId } }),
     prisma.ratePlan.findFirstOrThrow({ where: { id: input.ratePlanId, propertyId: input.propertyId } }),
-    prisma.user.findFirstOrThrow({ where: { propertyId: input.propertyId, role: "owner" } }),
+    getActingUser(input.propertyId),
   ]);
 
   if (room.status === "occupied" || room.status === "out_of_order") {

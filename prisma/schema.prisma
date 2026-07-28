@@ -47,14 +47,15 @@ model Property {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  roomTypes RoomType[]
-  rooms     Room[]
-  users     User[]
-  auditLog  AuditLog[]
-  ratePlans RatePlan[]
-  guests    Guest[]
-  stays     Stay[]
-  taxRules  TaxRule[]
+  roomTypes         RoomType[]
+  rooms             Room[]
+  users             User[]
+  auditLog          AuditLog[]
+  ratePlans         RatePlan[]
+  guests            Guest[]
+  stays             Stay[]
+  taxRules          TaxRule[]
+  housekeepingTasks HousekeepingTask[]
 
   @@map("properties")
 }
@@ -87,7 +88,8 @@ model Room {
   status     RoomStatus @default(vacant_clean)
   notes      String?
 
-  stays Stay[]
+  stays             Stay[]
+  housekeepingTasks HousekeepingTask[]
 
   @@unique([propertyId, roomNumber])
   @@map("rooms")
@@ -105,11 +107,12 @@ model User {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  auditEntries    AuditLog[]
-  checkedInStays  Stay[]      @relation("CheckedInBy")
-  checkedOutStays Stay[]      @relation("CheckedOutBy")
-  folioLines      FolioLine[]
-  payments        Payment[]
+  auditEntries              AuditLog[]
+  checkedInStays            Stay[]             @relation("CheckedInBy")
+  checkedOutStays           Stay[]             @relation("CheckedOutBy")
+  folioLines                FolioLine[]
+  payments                  Payment[]
+  assignedHousekeepingTasks HousekeepingTask[]
 
   @@map("users")
 }
@@ -402,4 +405,44 @@ model Payment {
   rawResponse Json? @map("raw_response")
 
   @@map("payments")
+}
+
+// --- Slice 6: Check-out ---------------------------------------------------
+// Only the table checkout needs to write to (departure_clean). The
+// housekeeper/owner task-management screens are slice 8.
+
+enum HousekeepingTaskType {
+  departure_clean
+  stayover
+  deep_clean
+  inspection
+}
+
+enum HousekeepingTaskStatus {
+  pending
+  in_progress
+  done
+  inspected
+}
+
+model HousekeepingTask {
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  roomId String @map("room_id")
+  room   Room   @relation(fields: [roomId], references: [id])
+
+  businessDate DateTime               @map("business_date") @db.Date
+  type         HousekeepingTaskType
+  status       HousekeepingTaskStatus @default(pending)
+
+  assignedToUserId String? @map("assigned_to_user_id")
+  assignedToUser   User?   @relation(fields: [assignedToUserId], references: [id])
+
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  notes       String?
+
+  @@map("housekeeping_tasks")
 }
