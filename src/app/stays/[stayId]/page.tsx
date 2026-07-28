@@ -14,7 +14,16 @@ export default async function StayPage({ params }: { params: Promise<{ stayId: s
   return (
     <FolioView
       propertyId={property.id}
-      property={{ name: property.name, address: property.address, city: property.city, state: property.state, zip: property.zip, phone: property.phone }}
+      property={{
+        name: property.name,
+        address: property.address,
+        city: property.city,
+        state: property.state,
+        zip: property.zip,
+        phone: property.phone,
+        cashDiscountMode: property.cashDiscountMode,
+        cashDiscountPercent: property.cashDiscountPercent ? Number(property.cashDiscountPercent) : 0,
+      }}
       stay={{
         id: stay.id,
         status: stay.status,

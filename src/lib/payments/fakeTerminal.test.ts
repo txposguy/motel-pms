@@ -79,4 +79,44 @@ describe("FakeTerminal", () => {
   it("ping always resolves true", async () => {
     expect(await terminal.ping()).toBe(true);
   });
+
+  describe("cash discount", () => {
+    it("applies no fee by default", async () => {
+      const promise = terminal.sale({ amountCents: 10000, invoiceNumber: "cd-1" });
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await promise;
+      expect(result.amountSettled).toBe(10000);
+      expect(result.feeApplied).toBeUndefined();
+    });
+
+    it("terminal mode: adds the configured percent on top of the requested amount", async () => {
+      terminal.configureMerchant({ cashDiscountPercent: 3.5 });
+      const promise = terminal.sale({ amountCents: 10000, invoiceNumber: "cd-2" });
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await promise;
+      expect(result.amountSettled).toBe(10350);
+      expect(result.feeApplied).toBe(350);
+    });
+
+    it("host mode: uses the explicit surcharge instead of the configured percent", async () => {
+      terminal.configureMerchant({ cashDiscountPercent: 3.5 });
+      const promise = terminal.sale({ amountCents: 10000, invoiceNumber: "cd-3", surchargeAmountCents: 275 });
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await promise;
+      expect(result.amountSettled).toBe(10275);
+      expect(result.feeApplied).toBe(275);
+    });
+
+    it("applies the configured fee even on a transaction that times out then resolves", async () => {
+      terminal.configureMerchant({ cashDiscountPercent: 5 });
+      const invoiceNumber = "cd-4";
+      const salePromise = terminal.sale({ amountCents: 5099, invoiceNumber });
+      await vi.advanceTimersByTimeAsync(3000);
+      await salePromise;
+      await vi.advanceTimersByTimeAsync(2000);
+      const resolved = await terminal.status(invoiceNumber);
+      expect(resolved.status).toBe("approved");
+      expect(resolved.amountSettled).toBe(5099 + Math.round(5099 * 0.05));
+    });
+  });
 });

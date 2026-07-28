@@ -6,6 +6,7 @@ import { checkInAction, checkInAndPayAction, lookupGuestAction, type CheckInActi
 import { computeExpectedCheckOut, formatMoney, calculateAge, isExpired } from "@/lib/checkin/rate";
 import { parseAAMVA, looksLikeAAMVA } from "@/lib/aamva";
 import { calculateTax, type TaxRuleInput } from "@/lib/tax";
+import { estimateCardTotal } from "@/lib/cashDiscount";
 
 type Property = {
   id: string;
@@ -17,6 +18,8 @@ type Property = {
   phone: string;
   checkOutTime: string;
   registrationCardFooterText: string | null;
+  cashDiscountMode: "off" | "terminal" | "host";
+  cashDiscountPercent: number;
 };
 
 type Room = { id: string; roomNumber: string; roomTypeName: string };
@@ -121,6 +124,8 @@ export function CheckInForm({
   }, [selectedRatePlan, taxRules]);
   const taxTotal = taxLines.reduce((sum, line) => sum + line.amount, 0);
   const grandTotal = (selectedRatePlan?.baseAmount ?? 0) + taxTotal;
+  const cashDiscountActive = property.cashDiscountMode !== "off" && property.cashDiscountPercent > 0;
+  const estimatedCardTotal = cashDiscountActive ? estimateCardTotal(grandTotal, property.cashDiscountPercent) : null;
 
   const idExpiredWarning = idExpiration && isExpired(new Date(idExpiration));
   const under18Warning = dob && calculateAge(new Date(dob)) < 18;
@@ -415,22 +420,54 @@ export function CheckInForm({
 
           {/* 7. Rate block */}
           <div className="mt-4 border-t border-gray-200 pt-3 text-sm">
+            {cashDiscountActive && (
+              <div className="flex items-center justify-end gap-6 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                <span>Cash</span>
+                <span>Card (est.)</span>
+              </div>
+            )}
             <div className="flex items-center justify-between text-gray-600">
               <span>
                 Room {rooms.find((r) => r.id === roomId)?.roomNumber ?? "—"} — {selectedRatePlan?.name ?? "—"}
               </span>
-              <span>{selectedRatePlan ? formatMoney(selectedRatePlan.baseAmount) : "—"}</span>
+              {cashDiscountActive ? (
+                <span className="flex gap-6">
+                  <span className="w-16 text-right">{selectedRatePlan ? formatMoney(selectedRatePlan.baseAmount) : "—"}</span>
+                  <span className="w-16 text-right">{selectedRatePlan ? formatMoney(estimateCardTotal(selectedRatePlan.baseAmount, property.cashDiscountPercent)) : "—"}</span>
+                </span>
+              ) : (
+                <span>{selectedRatePlan ? formatMoney(selectedRatePlan.baseAmount) : "—"}</span>
+              )}
             </div>
             {taxLines.map((line) => (
               <div key={line.taxRuleId} className="flex items-center justify-between text-gray-500">
                 <span>{line.description}</span>
-                <span>{formatMoney(line.amount)}</span>
+                {cashDiscountActive ? (
+                  <span className="flex gap-6">
+                    <span className="w-16 text-right">{formatMoney(line.amount)}</span>
+                    <span className="w-16 text-right">{formatMoney(estimateCardTotal(line.amount, property.cashDiscountPercent))}</span>
+                  </span>
+                ) : (
+                  <span>{formatMoney(line.amount)}</span>
+                )}
               </div>
             ))}
             <div className="mt-1 flex items-center justify-between border-t border-gray-200 pt-1 font-bold">
               <span>Total</span>
-              <span>{selectedRatePlan ? formatMoney(grandTotal) : "—"}</span>
+              {cashDiscountActive ? (
+                <span className="flex gap-6">
+                  <span className="w-16 text-right">{selectedRatePlan ? formatMoney(grandTotal) : "—"}</span>
+                  <span className="w-16 text-right">{selectedRatePlan && estimatedCardTotal !== null ? formatMoney(estimatedCardTotal) : "—"}</span>
+                </span>
+              ) : (
+                <span>{selectedRatePlan ? formatMoney(grandTotal) : "—"}</span>
+              )}
             </div>
+            {cashDiscountActive && (
+              <p className="mt-1 text-right text-[11px] text-gray-400">
+                Card price is an estimate — the terminal calculates the exact non-cash fee at payment time.
+              </p>
+            )}
           </div>
 
           {/* 8. Terms footer */}

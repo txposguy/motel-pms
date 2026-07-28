@@ -56,12 +56,32 @@ function fakeRrn() {
 const FAKE_MASKED_PAN = "************4242";
 
 export class FakeTerminal implements PaymentTerminal {
+  // Simulation-only state, standing in for the surcharge % a real terminal
+  // has configured against its MID in the Valor portal (PRD §6.1) — a real
+  // adapter has no equivalent method, since that config lives entirely
+  // outside the API and the PMS never controls it.
+  private cashDiscountPercent = 0;
+
+  configureMerchant(input: { cashDiscountPercent: number }) {
+    this.cashDiscountPercent = input.cashDiscountPercent;
+  }
+
+  // Host-calculated (explicit surchargeAmountCents) takes precedence when
+  // present; otherwise fall back to whatever this "terminal" is configured
+  // for, matching the two modes in PRD §6.3.
+  private feeCentsFor(req: SaleRequest): number {
+    if (req.surchargeAmountCents !== undefined) return req.surchargeAmountCents;
+    if (this.cashDiscountPercent > 0) return Math.round(req.amountCents * (this.cashDiscountPercent / 100));
+    return 0;
+  }
+
   async ping(): Promise<boolean> {
     return true;
   }
 
   async sale(req: SaleRequest): Promise<TxnResult> {
     const lastTwoCents = req.amountCents % 100;
+    const feeCents = this.feeCentsFor(req);
 
     if (lastTwoCents === 13) {
       await delay(DECLINE_DELAY_MS);
@@ -77,7 +97,8 @@ export class FakeTerminal implements PaymentTerminal {
       const transactionId = fakeTxnId();
       const approvedResult: TxnResult = {
         status: "approved",
-        amountSettled: req.amountCents,
+        amountSettled: req.amountCents + feeCents,
+        feeApplied: feeCents || undefined,
         authCode: fakeAuthCode(),
         rrn: fakeRrn(),
         transactionId,
@@ -100,7 +121,8 @@ export class FakeTerminal implements PaymentTerminal {
     await delay(APPROVE_DELAY_MS);
     return {
       status: "approved",
-      amountSettled: req.amountCents,
+      amountSettled: req.amountCents + feeCents,
+      feeApplied: feeCents || undefined,
       authCode: fakeAuthCode(),
       rrn: fakeRrn(),
       transactionId: fakeTxnId(),

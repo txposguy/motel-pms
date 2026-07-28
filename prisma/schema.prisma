@@ -29,6 +29,16 @@ enum UserRole {
   housekeeper
 }
 
+// off: no surcharge. terminal: the terminal adds its own configured
+// surcharge and the PMS reads back the actual amount settled. host: the
+// PMS computes the surcharge and tells the terminal the exact amount to
+// add, for properties that want exact control of rounding. See PRD §6.3.
+enum CashDiscountMode {
+  off
+  terminal
+  host
+}
+
 model Property {
   id       String @id @default(cuid())
   name     String
@@ -43,6 +53,12 @@ model Property {
   checkOutTime String @default("11:00") @map("check_out_time")
 
   registrationCardFooterText String? @map("registration_card_footer_text")
+
+  // Slice 7: cash discount. `off` folds PRD §3.2's separate
+  // cash_discount_enabled boolean into this — a mode already encodes
+  // "disabled" without a second flag that could drift out of sync with it.
+  cashDiscountMode    CashDiscountMode @default(off) @map("cash_discount_mode")
+  cashDiscountPercent Decimal?         @map("cash_discount_percent") @db.Decimal(5, 3)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

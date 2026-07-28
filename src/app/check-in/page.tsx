@@ -32,6 +32,8 @@ export default async function CheckInPage({
         phone: property.phone,
         checkOutTime: property.checkOutTime,
         registrationCardFooterText: property.registrationCardFooterText,
+        cashDiscountMode: property.cashDiscountMode,
+        cashDiscountPercent: property.cashDiscountPercent ? Number(property.cashDiscountPercent) : 0,
       }}
       rooms={vacantRooms.map((r) => ({ id: r.id, roomNumber: r.roomNumber, roomTypeName: r.roomType.name }))}
       ratePlans={ratePlans.map((rp) => ({

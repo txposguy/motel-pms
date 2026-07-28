@@ -12,6 +12,8 @@ async function main() {
     update: {
       registrationCardFooterText:
         "By signing below, guest agrees to the property's rules and rates and authorizes the charges listed above.",
+      cashDiscountMode: "terminal",
+      cashDiscountPercent: 3.5,
     },
     create: {
       id: "seed-property-1",
@@ -23,6 +25,8 @@ async function main() {
       phone: "(281) 555-0143",
       registrationCardFooterText:
         "By signing below, guest agrees to the property's rules and rates and authorizes the charges listed above.",
+      cashDiscountMode: "terminal",
+      cashDiscountPercent: 3.5,
     },
   });
 

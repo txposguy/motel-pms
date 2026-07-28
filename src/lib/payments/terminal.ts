@@ -6,11 +6,15 @@
 export type TxnStatus = "approved" | "declined" | "voided" | "error" | "timeout";
 
 export type SaleRequest = {
-  amountCents: number;
+  amountCents: number; // always the CASH price (PRD §6.2 rule 1) — see surchargeAmountCents for card
   invoiceNumber: string; // = folio id, max 24 chars — used for reconciliation
   allowPartial?: boolean;
   tokenize?: boolean; // request a token for card-on-file
   token?: string; // charge an existing token (weekly renewals)
+  // Host-calculated cash discount (PRD §6.3): set only in `host` mode, where
+  // the PMS computes the exact surcharge and tells the terminal what to add
+  // on top of amountCents, rather than letting the terminal compute its own.
+  surchargeAmountCents?: number;
 };
 
 export type PreAuthRequest = {

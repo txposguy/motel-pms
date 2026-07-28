@@ -15,6 +15,45 @@ function mapTxnStatus(status: TxnResult["status"]): "approved" | "declined" | "v
   return "declined"; // declined | error — closest fit; clerk can retry either way
 }
 
+// PRD §6.2 rule 3: the card fee is never blended into the room charge — it
+// posts as its own incidental line so room revenue and tax stay clean. This
+// is what makes "reconciliation must tolerate amount_requested ≠
+// amount_settled" (rule 4) actually balance: once this line posts, the
+// folio's charges total rises to match what the guest was really charged.
+// Scoped to sale() only — a pre-auth is a hold, not a purchase, so its
+// capture doesn't get a cash-discount adjustment.
+async function maybePostNonCashAdjustment(payment: { id: string; folioId: string; method: string; amountRequested: unknown; amountSettled: unknown }, propertyId: string, userId: string) {
+  if (payment.method !== "card") return;
+  const requested = Number(payment.amountRequested);
+  const settled = payment.amountSettled === null ? null : Number(payment.amountSettled);
+  if (settled === null || settled <= requested) return;
+
+  const fee = Math.round((settled - requested) * 100) / 100;
+  const businessDate = new Date(new Date().toDateString());
+
+  const line = await prisma.folioLine.create({
+    data: {
+      folioId: payment.folioId,
+      createdByUserId: userId,
+      type: "incidental",
+      description: "Non-Cash Adjustment",
+      amount: fee,
+      businessDate,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      propertyId,
+      userId,
+      entityType: "folio_line",
+      entityId: line.id,
+      action: "post_non_cash_adjustment",
+      after: { paymentId: payment.id, fee },
+    },
+  });
+}
+
 async function applyTerminalResult(paymentId: string, propertyId: string, userId: string, result: TxnResult) {
   // A timeout means "unknown" — never auto-retry (risk of double-charging
   // the guest). Leave status = pending; the clerk resolves it via RECONCILE.
@@ -51,6 +90,10 @@ async function applyTerminalResult(paymentId: string, propertyId: string, userId
       after: { transactionId: result.transactionId, amountSettled: result.amountSettled },
     },
   });
+
+  if (updated.status === "approved" && !updated.isPreauth) {
+    await maybePostNonCashAdjustment(updated, propertyId, userId);
+  }
 
   return updated;
 }
@@ -121,12 +164,29 @@ export async function takePayment(input: {
   });
 
   const amountCents = Math.round(input.amount * 100);
+  const property = await prisma.property.findUniqueOrThrow({ where: { id: input.propertyId } });
+  const cashDiscountPercent = property.cashDiscountPercent ? Number(property.cashDiscountPercent) : 0;
+
+  let surchargeAmountCents: number | undefined;
+  if (property.cashDiscountMode === "host" && cashDiscountPercent > 0) {
+    // Host-calculated: we compute the exact surcharge and tell the terminal
+    // what to add, for exact control of rounding (PRD §6.3).
+    surchargeAmountCents = Math.round(amountCents * (cashDiscountPercent / 100));
+  } else if (property.cashDiscountMode === "terminal" && cashDiscountPercent > 0) {
+    // Terminal-calculated (default): the terminal applies its own
+    // configured surcharge — see fakeTerminal.ts for why this call only
+    // exists on the fake adapter and has no real-adapter equivalent.
+    fakeTerminal.configureMerchant({ cashDiscountPercent });
+  } else {
+    fakeTerminal.configureMerchant({ cashDiscountPercent: 0 });
+  }
+
   // NOTE: PRD §5.3 specifies invoiceNumber = folio id. That means two
   // pending card attempts against the same folio (e.g. a retry before the
   // first is reconciled) collide in this fake adapter's in-memory
   // bookkeeping — a real Valor integration's actual reconciliation
   // mechanics may need a finer-grained reference. Flagged, not fixed here.
-  const result = await terminal.sale({ amountCents, invoiceNumber: folio.id.slice(0, 24) });
+  const result = await terminal.sale({ amountCents, invoiceNumber: folio.id.slice(0, 24), surchargeAmountCents });
 
   return applyTerminalResult(payment.id, input.propertyId, actingUser.id, result);
 }

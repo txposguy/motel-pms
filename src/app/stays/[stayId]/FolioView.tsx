@@ -15,8 +15,18 @@ import {
 } from "./actions";
 import { formatMoney } from "@/lib/checkin/rate";
 import { computeBalance, computePaidAmount } from "@/lib/folio/balance";
+import { estimateCardTotal } from "@/lib/cashDiscount";
 
-type Property = { name: string; address: string; city: string; state: string; zip: string; phone: string };
+type Property = {
+  name: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  cashDiscountMode: "off" | "terminal" | "host";
+  cashDiscountPercent: number;
+};
 
 type Stay = {
   id: string;
@@ -107,6 +117,7 @@ export function FolioView({
   const hasPendingPayment = folio.payments.some((p) => p.status === "pending");
   const openPreauth = folio.payments.find((p) => p.isPreauth && p.status === "approved" && !p.preauthCapturedAt);
   const extendUnitLabel = stay.ratePlanUnit === "hourly" ? "block" : stay.ratePlanUnit === "weekly" ? "week" : "night";
+  const cashDiscountActive = property.cashDiscountMode !== "off" && property.cashDiscountPercent > 0;
 
   return (
     <main className="flex flex-1 justify-center bg-gray-100 p-4 dark:bg-gray-950 sm:p-8">
@@ -157,7 +168,14 @@ export function FolioView({
 
           <div className="mt-5 flex items-center justify-between border-t border-gray-200 pt-3">
             <span className="text-sm font-semibold text-gray-600">Balance Due</span>
-            <span className="text-2xl font-bold">{formatMoney(balance)}</span>
+            <div className="text-right">
+              <span className="text-2xl font-bold">{formatMoney(balance)}</span>
+              {cashDiscountActive && balance > 0 && (
+                <div className="text-xs text-gray-400">
+                  Cash — Card (est.): {formatMoney(estimateCardTotal(balance, property.cashDiscountPercent))}
+                </div>
+              )}
+            </div>
           </div>
           {hasPendingPayment && (
             <p className="mt-1 text-sm font-semibold text-amber-600">
