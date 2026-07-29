@@ -60,6 +60,12 @@ model Property {
   cashDiscountMode    CashDiscountMode @default(off) @map("cash_discount_mode")
   cashDiscountPercent Decimal?         @map("cash_discount_percent") @db.Decimal(5, 3)
 
+  // Slice 8: still an open question in PRD §15 for the pilot property —
+  // defaulted off (straight dirty→clean) as the simpler mode. Flip this
+  // once that's actually decided; everything downstream already branches
+  // on it.
+  inspectionRequired Boolean @default(false) @map("inspection_required")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -455,6 +461,11 @@ model HousekeepingTask {
 
   assignedToUserId String? @map("assigned_to_user_id")
   assignedToUser   User?   @relation(fields: [assignedToUserId], references: [id])
+
+  // A room can legitimately get a second departure_clean task before the
+  // first is done — check-in allows renting a vacant_dirty room, not just
+  // vacant_clean. businessDate alone can't order same-day tasks; this can.
+  createdAt DateTime @default(now()) @map("created_at")
 
   startedAt   DateTime? @map("started_at")
   completedAt DateTime? @map("completed_at")

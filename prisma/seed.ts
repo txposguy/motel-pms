@@ -103,6 +103,24 @@ async function main() {
     },
   });
 
+  const housekeepers = [
+    { id: "seed-user-hk-maria", name: "Maria Gonzalez", pin: "1111" },
+    { id: "seed-user-hk-ana", name: "Ana Reyes", pin: "2222" },
+  ];
+  for (const hk of housekeepers) {
+    await prisma.user.upsert({
+      where: { id: hk.id },
+      update: {},
+      create: {
+        id: hk.id,
+        propertyId: property.id,
+        name: hk.name,
+        role: "housekeeper",
+        pinHash: await bcrypt.hash(hk.pin, 10),
+      },
+    });
+  }
+
   const ratePlans: {
     id: string;
     name: string;

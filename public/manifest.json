@@ -1,0 +1,14 @@
+{
+  "name": "LodgeDesk Housekeeping",
+  "short_name": "Housekeeping",
+  "description": "Housekeeper room task list",
+  "start_url": "/housekeeping/mobile",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#1d4ed8",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/hk-icon.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/hk-icon.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
