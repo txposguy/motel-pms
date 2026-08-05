@@ -25,10 +25,22 @@ export type PreAuthRequest = {
 export type CaptureRequest = {
   transactionId: string;
   amountCents: number;
+  // Same reference the original sale/preauth returned — see VoidRequest.
+  // Not yet live-tested for capture specifically, but capture uses the same
+  // TRAN_MODE "FETCH TRANSACTION" family as void, where this was required.
+  providerRef?: string;
 };
 
 export type VoidRequest = {
   transactionId: string;
+  // Discovered via a live test against Valor Connect: voiding with amount 0
+  // is rejected ("Invalid Amount") — it validates against the original
+  // transaction's amount, so callers must supply it.
+  amountCents: number;
+  // The original transaction's TRAN_NO, also discovered live — REQ_TXN_ID
+  // and amount alone aren't enough to identify which transaction to act on
+  // ("Tran/Card Number/Transaction ID is Empty" without it).
+  providerRef?: string;
 };
 
 export type RefundRequest = {

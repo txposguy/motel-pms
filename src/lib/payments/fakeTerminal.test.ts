@@ -70,7 +70,7 @@ describe("FakeTerminal", () => {
   });
 
   it("void returns a voided status", async () => {
-    const promise = terminal.void({ transactionId: "FAKE-123" });
+    const promise = terminal.void({ transactionId: "FAKE-123", amountCents: 1000 });
     await vi.advanceTimersByTimeAsync(1000);
     const result = await promise;
     expect(result.status).toBe("voided");

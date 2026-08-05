@@ -1,18 +1,33 @@
 import { prisma } from "@/lib/prisma";
 import { fakeTerminal } from "@/lib/payments/fakeTerminal";
+import { valorConnectTerminal } from "@/lib/payments/valorConnectTerminal";
 import type { PaymentTerminal, TxnResult } from "@/lib/payments/terminal";
 import type { Prisma } from "@/generated/prisma/client";
 import { getActingUser } from "@/lib/data/actingUser";
 
-// Swap this for the real Valor adapter once there's a demo terminal + the
-// ValorPay POS Integration Specification in hand — nothing else in this
-// file (or anywhere else that takes a payment) needs to change.
-const terminal: PaymentTerminal = fakeTerminal;
+// Real adapter when Valor credentials are configured, fake otherwise — this
+// is the one line that changes when the terminal moves from demo to
+// production; nothing else in the app knows or cares which one is active.
+const terminal: PaymentTerminal =
+  process.env.VALOR_APP_ID && process.env.VALOR_APP_KEY && process.env.VALOR_EPI && process.env.VALOR_CHANNEL_ID
+    ? valorConnectTerminal
+    : fakeTerminal;
 
 function mapTxnStatus(status: TxnResult["status"]): "approved" | "declined" | "voided" {
   if (status === "approved") return "approved";
   if (status === "voided") return "voided";
   return "declined"; // declined | error — closest fit; clerk can retry either way
+}
+
+// Valor Connect needs the original transaction's TRAN_NO to void/capture it
+// (discovered live — see valorConnectTerminal.ts). It isn't a field on
+// TxnResult, but it's in the raw response we already persist.
+function extractProviderRef(rawResponse: Prisma.JsonValue | null): string | undefined {
+  if (!rawResponse || typeof rawResponse !== "object" || Array.isArray(rawResponse)) return undefined;
+  const response = (rawResponse as Record<string, unknown>).response;
+  if (!response || typeof response !== "object") return undefined;
+  const tranNo = (response as Record<string, unknown>).TRAN_NO;
+  return typeof tranNo === "string" ? tranNo : undefined;
 }
 
 // PRD §6.2 rule 3: the card fee is never blended into the room charge — it
@@ -248,7 +263,11 @@ export async function capturePreAuth(input: { propertyId: string; paymentId: str
   const captureAmount = input.amount ?? Number(payment.amountRequested);
   const amountCents = Math.round(captureAmount * 100);
 
-  const result = await terminal.capture({ transactionId: payment.providerTransactionId, amountCents });
+  const result = await terminal.capture({
+    transactionId: payment.providerTransactionId,
+    amountCents,
+    providerRef: extractProviderRef(payment.rawResponse),
+  });
 
   const updated = await prisma.payment.update({
     where: { id: payment.id },
@@ -282,7 +301,12 @@ export async function voidPreAuth(input: { propertyId: string; paymentId: string
   if (!payment.providerTransactionId) throw new Error("Missing transaction reference for this pre-authorization.");
 
   const actingUser = await getActingUser(input.propertyId);
-  const result = await terminal.void({ transactionId: payment.providerTransactionId });
+  const amountCents = Math.round(Number(payment.amountRequested) * 100);
+  const result = await terminal.void({
+    transactionId: payment.providerTransactionId,
+    amountCents,
+    providerRef: extractProviderRef(payment.rawResponse),
+  });
 
   const updated = await prisma.payment.update({
     where: { id: payment.id },
