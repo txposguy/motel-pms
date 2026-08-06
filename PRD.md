@@ -270,8 +270,9 @@ Marking DONE sets the room to `vacant_dirty → vacant_clean` only after inspect
 
 A single button, run once per day (typically after 11pm or before the morning shift). It:
 
-1. Posts room charges + tax for every `in_house` stay on a nightly or weekly plan. (Hourly plans post at check-in, not at audit.)
-2. Increments `consecutive_nights_counter` for every in-house stay.
+1. Posts room charges + tax for every `in_house` stay on a **nightly** plan not already charged for today (a same-day check-in already posted its first night at check-in; audit only posts for stays continuing from an earlier business date). Hourly plans post at check-in, not at audit, and are never touched by it.
+   > **Owner decision (2026-08-06):** a **weekly** plan does *not* get an auto-posted nightly charge — it only gets its consecutive-night counter bumped (step 2), same as nightly. The week was already billed as one lump sum at check-in or the last renewal; the front desk still renews it manually via Extend Stay, same as today. Night audit never posts a new week's charge on its own.
+2. Increments `consecutive_nights_counter` for every in-house stay that isn't skipped in step 1 — nightly *and* weekly both accrue toward the 30-day count even though only nightly is auto-billed.
 3. **Applies the 30-day tax exemption** where triggered (see §7).
 4. Flags overstays (expected checkout in the past, still in house).
 5. Snapshots the day's totals into `business_dates`.
@@ -279,6 +280,8 @@ A single button, run once per day (typically after 11pm or before the morning sh
 7. Prints/exports the Night Audit Report.
 
 Night audit must be **idempotent and re-runnable if it fails midway**. Wrap it in a transaction.
+
+> **Implementation note:** `business_date` is a pure calendar date, but Postgres `DATE` columns discard time/timezone on write and Prisma reconstructs them as UTC midnight on read regardless of how they were written — a live test caught this turning into a real bug (a same-day check-in's "already charged today" check silently never matched, which would have double-billed its first night) and a display bug (dates rendering one day early in any US timezone). Fixed by always constructing and comparing business dates as UTC midnight (`src/lib/nightAudit/businessDate.ts`) — never with `.toDateString()`/`.toLocaleDateString()` directly.
 
 ### 4.8 Reports (v1 list)
 

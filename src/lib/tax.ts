@@ -3,6 +3,10 @@ export type TaxRuleInput = {
   name: string;
   ratePercent: number;
   appliesTo: "room_charge" | "incidental";
+  // Only read by night audit's exemption logic (see nightAudit/decide.ts) —
+  // irrelevant to calculateTax itself, optional so existing call sites and
+  // fixtures don't need it.
+  exemptAfterConsecutiveNights?: number | null;
 };
 
 export type TaxLineResult = {

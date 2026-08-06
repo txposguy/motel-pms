@@ -62,6 +62,9 @@ export default async function Home() {
           <Link href="/housekeeping" className="text-sm text-gray-500 hover:underline dark:text-gray-400">
             Housekeeping
           </Link>
+          <Link href="/night-audit" className="text-sm text-gray-500 hover:underline dark:text-gray-400">
+            Night Audit
+          </Link>
           <Link
             href="/check-in"
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"

@@ -66,6 +66,14 @@ model Property {
   // on it.
   inspectionRequired Boolean @default(false) @map("inspection_required")
 
+  // Slice 9: PRD §7.2 explicitly flags that the retroactive-credit
+  // mechanics for the 30-day exemption need confirmation from the
+  // property's CPA or the Texas Comptroller before go-live, and says to
+  // build it configurable rather than assume. Defaulted on since the PRD
+  // treats getting the exemption right as non-negotiable — flip off only if
+  // the CPA says the retroactive piece specifically shouldn't run.
+  retroactiveCreditEnabled Boolean @default(true) @map("retroactive_credit_enabled")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -78,6 +86,7 @@ model Property {
   stays             Stay[]
   taxRules          TaxRule[]
   housekeepingTasks HousekeepingTask[]
+  businessDates     BusinessDate[]
 
   @@map("properties")
 }
@@ -135,6 +144,7 @@ model User {
   folioLines                FolioLine[]
   payments                  Payment[]
   assignedHousekeepingTasks HousekeepingTask[]
+  closedBusinessDates       BusinessDate[]
 
   @@map("users")
 }
@@ -481,4 +491,49 @@ model HousekeepingTask {
   notes       String?
 
   @@map("housekeeping_tasks")
+}
+
+// --- Slice 9: Night Audit --------------------------------------------------
+
+enum BusinessDateStatus {
+  open
+  closed
+}
+
+// One row per property per calendar business date, created when Night
+// Audit closes that date. Its presence with status = closed is the lock
+// that makes night audit idempotent: re-running for an already-closed date
+// is refused outright (PRD §4.7 — "a closed business date is immutable").
+// There's deliberately no "open, in-progress" row written mid-run — the
+// whole audit runs in one transaction, so a failure partway leaves nothing
+// committed at all, and simply re-running is safe (Postgres rolls back the
+// entire transaction on any error).
+model BusinessDate {
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  businessDate DateTime           @map("business_date") @db.Date
+  status       BusinessDateStatus @default(closed)
+
+  closedAt       DateTime @default(now()) @map("closed_at")
+  closedByUserId String   @map("closed_by_user_id")
+  closedByUser   User     @relation(fields: [closedByUserId], references: [id])
+
+  // Snapshot totals for this business date — PRD §3.2. Kept even though
+  // they're derivable from folio_lines/payments, because folio_lines can
+  // keep accruing corrections on later dates (adjustments referencing an
+  // older business_date via voids_line_id) that must not change what an
+  // already-closed date reported.
+  roomsSold        Int     @default(0) @map("rooms_sold")
+  roomRevenue      Decimal @default(0) @map("room_revenue") @db.Decimal(10, 2)
+  taxCollected     Decimal @default(0) @map("tax_collected") @db.Decimal(10, 2)
+  paymentsCash     Decimal @default(0) @map("payments_cash") @db.Decimal(10, 2)
+  paymentsCard     Decimal @default(0) @map("payments_card") @db.Decimal(10, 2)
+  occupancyPercent Decimal @default(0) @map("occupancy_percent") @db.Decimal(5, 2)
+  adr              Decimal @default(0) @db.Decimal(10, 2)
+  revpar           Decimal @default(0) @db.Decimal(10, 2)
+
+  @@unique([propertyId, businessDate])
+  @@map("business_dates")
 }

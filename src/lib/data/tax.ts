@@ -12,5 +12,11 @@ export async function getActiveTaxRules(propertyId: string, asOf: Date): Promise
       ],
     },
   });
-  return rules.map((r) => ({ id: r.id, name: r.name, ratePercent: Number(r.ratePercent), appliesTo: r.appliesTo }));
+  return rules.map((r) => ({
+    id: r.id,
+    name: r.name,
+    ratePercent: Number(r.ratePercent),
+    appliesTo: r.appliesTo,
+    exemptAfterConsecutiveNights: r.exemptAfterConsecutiveNights,
+  }));
 }
