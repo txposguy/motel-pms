@@ -290,6 +290,15 @@ export async function capturePreAuth(input: { propertyId: string; paymentId: str
     },
   });
 
+  // Discovered via a live capture test: a captured pre-auth can carry the
+  // same terminal-side surcharge a regular sale does (the hold becomes a
+  // real charge at that point). capturePreAuth doesn't go through
+  // applyTerminalResult like takePayment/reconcile do, so without this it
+  // silently missed posting the Non-Cash Adjustment line a sale gets.
+  if (updated.status === "approved") {
+    await maybePostNonCashAdjustment(updated, input.propertyId, actingUser.id);
+  }
+
   return updated;
 }
 
