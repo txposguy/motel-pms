@@ -8,6 +8,7 @@ import {
   checkOutAction,
   extendStayAction,
   reconcilePaymentAction,
+  refundPaymentAction,
   takePaymentAction,
   takePreAuthAction,
   voidPreAuthAction,
@@ -62,6 +63,7 @@ type Payment = {
   maskedPan: string | null;
   isPreauth: boolean;
   preauthCapturedAt: Date | null;
+  refundsPaymentId: string | null;
 };
 
 type Folio = { id: string; status: string; lines: FolioLine[]; payments: Payment[] };
@@ -100,6 +102,7 @@ export function FolioView({
   const [showPayment, setShowPayment] = useState(false);
   const [showCheckOut, setShowCheckOut] = useState(false);
   const [checkOutOverride, setCheckOutOverride] = useState(false);
+  const [openRefundId, setOpenRefundId] = useState<string | null>(null);
 
   const [addChargeState, addChargeFormAction, addChargePending] = useActionState(addChargeAction, initialState);
   const [extendState, extendFormAction, extendPending] = useActionState(extendStayAction, initialState);
@@ -108,6 +111,7 @@ export function FolioView({
   const [reconcileState, reconcileFormAction, reconcilePending] = useActionState(reconcilePaymentAction, initialState);
   const [captureState, captureFormAction, capturePending] = useActionState(capturePreAuthAction, initialState);
   const [voidState, voidFormAction, voidPending] = useActionState(voidPreAuthAction, initialState);
+  const [refundState, refundFormAction, refundPending] = useActionState(refundPaymentAction, initialState);
   const [checkOutState, checkOutFormAction, checkOutPending] = useActionState(checkOutAction, initialState);
 
   const isOpen = folio.status === "open";
@@ -228,74 +232,133 @@ export function FolioView({
                   </tr>
                 </thead>
                 <tbody>
-                  {folio.payments.map((p) => (
-                    <tr key={p.id} className="border-b border-gray-100">
-                      <td className="py-1.5 text-gray-500">{p.createdAt.toLocaleString()}</td>
-                      <td className="py-1.5 capitalize">
-                        {p.method}
-                        {p.isPreauth && <span className="ml-1 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-700">Pre-Auth</span>}
-                        {p.cardBrand && p.maskedPan && <span className="text-gray-400"> · {p.cardBrand} {p.maskedPan.slice(-4)}</span>}
-                      </td>
-                      <td className="py-1.5">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${PAYMENT_STATUS_STYLES[p.status] ?? ""}`}>
-                          {p.status}
-                        </span>
-                        {p.isPreauth && p.status === "approved" && p.preauthCapturedAt && (
-                          <span className="ml-1 text-[10px] text-gray-400">captured</span>
-                        )}
-                      </td>
-                      <td className="py-1.5 text-right">{formatMoney(p.amountSettled ?? p.amountRequested)}</td>
-                      <td className="no-print py-1.5 text-right whitespace-nowrap">
-                        {p.status === "pending" && (
-                          <form action={reconcileFormAction} className="inline">
-                            <input type="hidden" name="propertyId" value={propertyId} />
-                            <input type="hidden" name="stayId" value={stay.id} />
-                            <input type="hidden" name="paymentId" value={p.id} />
-                            <button
-                              type="submit"
-                              disabled={reconcilePending}
-                              className="rounded border border-amber-500 px-2 py-0.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
-                            >
-                              {reconcilePending ? "Checking…" : "RECONCILE"}
-                            </button>
-                          </form>
-                        )}
-                        {p.isPreauth && p.status === "approved" && !p.preauthCapturedAt && isOpen && (
-                          <span className="inline-flex gap-1">
-                            <form action={captureFormAction} className="inline">
+                  {folio.payments.map((p) => {
+                    const displayAmount = p.amountSettled ?? p.amountRequested;
+                    // A payment can be refunded more than once (partial
+                    // refunds) — figure out what's left by subtracting any
+                    // refund rows already linked to it.
+                    const alreadyRefunded = folio.payments
+                      .filter((r) => r.refundsPaymentId === p.id && (r.status === "approved" || r.status === "pending"))
+                      .reduce((sum, r) => sum + Math.abs(r.amountSettled ?? r.amountRequested), 0);
+                    const refundable = Math.round((displayAmount - alreadyRefunded) * 100) / 100;
+                    // Refunds a settled payment (a completed sale, or a
+                    // captured pre-auth) — not gated on the folio being open,
+                    // since refunding after check-out (a dispute, an error
+                    // caught later) is the normal case, not an edge case.
+                    const isRefundable =
+                      p.status === "approved" && !p.refundsPaymentId && (!p.isPreauth || p.preauthCapturedAt) && refundable > 0;
+
+                    return (
+                      <tr key={p.id} className="border-b border-gray-100">
+                        <td className="py-1.5 text-gray-500">{p.createdAt.toLocaleString()}</td>
+                        <td className="py-1.5 capitalize">
+                          {p.method}
+                          {p.isPreauth && <span className="ml-1 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-700">Pre-Auth</span>}
+                          {p.refundsPaymentId && <span className="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700">Refund</span>}
+                          {p.cardBrand && p.maskedPan && <span className="text-gray-400"> · {p.cardBrand} {p.maskedPan.slice(-4)}</span>}
+                        </td>
+                        <td className="py-1.5">
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${PAYMENT_STATUS_STYLES[p.status] ?? ""}`}>
+                            {p.status}
+                          </span>
+                          {p.isPreauth && p.status === "approved" && p.preauthCapturedAt && (
+                            <span className="ml-1 text-[10px] text-gray-400">captured</span>
+                          )}
+                        </td>
+                        <td className={`py-1.5 text-right ${displayAmount < 0 ? "text-red-600" : ""}`}>{formatMoney(displayAmount)}</td>
+                        <td className="no-print py-1.5 text-right whitespace-nowrap">
+                          {p.status === "pending" && (
+                            <form action={reconcileFormAction} className="inline">
                               <input type="hidden" name="propertyId" value={propertyId} />
                               <input type="hidden" name="stayId" value={stay.id} />
                               <input type="hidden" name="paymentId" value={p.id} />
                               <button
                                 type="submit"
-                                disabled={capturePending}
-                                className="rounded border border-green-600 px-2 py-0.5 text-xs font-semibold text-green-700 hover:bg-green-50"
+                                disabled={reconcilePending}
+                                className="rounded border border-amber-500 px-2 py-0.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
                               >
-                                Capture
+                                {reconcilePending ? "Checking…" : "RECONCILE"}
                               </button>
                             </form>
-                            <form action={voidFormAction} className="inline">
-                              <input type="hidden" name="propertyId" value={propertyId} />
-                              <input type="hidden" name="stayId" value={stay.id} />
-                              <input type="hidden" name="paymentId" value={p.id} />
+                          )}
+                          {p.isPreauth && p.status === "approved" && !p.preauthCapturedAt && isOpen && (
+                            <span className="inline-flex gap-1">
+                              <form action={captureFormAction} className="inline">
+                                <input type="hidden" name="propertyId" value={propertyId} />
+                                <input type="hidden" name="stayId" value={stay.id} />
+                                <input type="hidden" name="paymentId" value={p.id} />
+                                <button
+                                  type="submit"
+                                  disabled={capturePending}
+                                  className="rounded border border-green-600 px-2 py-0.5 text-xs font-semibold text-green-700 hover:bg-green-50"
+                                >
+                                  Capture
+                                </button>
+                              </form>
+                              <form action={voidFormAction} className="inline">
+                                <input type="hidden" name="propertyId" value={propertyId} />
+                                <input type="hidden" name="stayId" value={stay.id} />
+                                <input type="hidden" name="paymentId" value={p.id} />
+                                <button
+                                  type="submit"
+                                  disabled={voidPending}
+                                  className="rounded border border-red-500 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                                >
+                                  Void
+                                </button>
+                              </form>
+                            </span>
+                          )}
+                          {isRefundable && (
+                            openRefundId === p.id ? (
+                              <form action={refundFormAction} className="inline-flex items-center gap-1">
+                                <input type="hidden" name="propertyId" value={propertyId} />
+                                <input type="hidden" name="stayId" value={stay.id} />
+                                <input type="hidden" name="paymentId" value={p.id} />
+                                <input
+                                  name="amount"
+                                  type="number"
+                                  step="0.01"
+                                  min="0.01"
+                                  max={refundable.toFixed(2)}
+                                  defaultValue={refundable.toFixed(2)}
+                                  className="w-20 rounded border border-gray-400 px-1.5 py-0.5 text-xs"
+                                  required
+                                />
+                                <button
+                                  type="submit"
+                                  disabled={refundPending}
+                                  className="rounded border border-red-500 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                                >
+                                  {refundPending ? "…" : "Confirm"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setOpenRefundId(null)}
+                                  className="text-xs text-gray-400 hover:underline"
+                                >
+                                  Cancel
+                                </button>
+                              </form>
+                            ) : (
                               <button
-                                type="submit"
-                                disabled={voidPending}
+                                type="button"
+                                onClick={() => setOpenRefundId(p.id)}
                                 className="rounded border border-red-500 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-50"
                               >
-                                Void
+                                Refund
                               </button>
-                            </form>
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-              {(reconcileState.error || captureState.error || voidState.error) && (
+              {(reconcileState.error || captureState.error || voidState.error || refundState.error) && (
                 <p className="no-print mt-1 text-sm font-semibold text-red-600">
-                  {reconcileState.error || captureState.error || voidState.error}
+                  {reconcileState.error || captureState.error || voidState.error || refundState.error}
                 </p>
               )}
             </>

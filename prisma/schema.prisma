@@ -421,6 +421,15 @@ model Payment {
   isPreauth         Boolean   @default(false) @map("is_preauth")
   preauthCapturedAt DateTime? @map("preauth_captured_at")
 
+  // A refund is its own Payment row (method/provider copied from the
+  // original, amounts negative) rather than mutating the original in place —
+  // this is what lets a payment be partially refunded more than once while
+  // still keeping the original's settled amount as a true historical record.
+  // The original gets status = refunded only once nothing is left to refund.
+  refundsPaymentId String?   @map("refunds_payment_id")
+  refundsPayment   Payment?  @relation("PaymentRefund", fields: [refundsPaymentId], references: [id])
+  refunds          Payment[] @relation("PaymentRefund")
+
   // Always persist the provider's raw response — needed for dispute
   // resolution and, right now, tagged `{ simulated: true }` by the fake
   // terminal so it's obvious in the data which payments aren't real.

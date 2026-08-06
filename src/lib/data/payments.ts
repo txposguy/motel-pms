@@ -196,12 +196,13 @@ export async function takePayment(input: {
     fakeTerminal.configureMerchant({ cashDiscountPercent: 0 });
   }
 
-  // NOTE: PRD §5.3 specifies invoiceNumber = folio id. That means two
-  // pending card attempts against the same folio (e.g. a retry before the
-  // first is reconciled) collide in this fake adapter's in-memory
-  // bookkeeping — a real Valor integration's actual reconciliation
-  // mechanics may need a finer-grained reference. Flagged, not fixed here.
-  const result = await terminal.sale({ amountCents, invoiceNumber: folio.id.slice(0, 24), surchargeAmountCents });
+  // Use the payment row's own id, not the folio id, as the reference sent to
+  // the terminal — a live refund test surfaced that Valor identifies a
+  // transaction by this reference alone (see refundPayment), so any folio
+  // with more than one card transaction (a retry, a second pre-auth, a
+  // pre-auth plus a sale) would have them collide on the same reference if
+  // it were shared. payment.id is unique per attempt.
+  const result = await terminal.sale({ amountCents, invoiceNumber: payment.id.slice(0, 24), surchargeAmountCents });
 
   return applyTerminalResult(payment.id, input.propertyId, actingUser.id, result);
 }
@@ -211,7 +212,23 @@ export async function reconcilePayment(input: { propertyId: string; paymentId: s
   if (payment.status !== "pending") return payment;
 
   const actingUser = await getActingUser(input.propertyId);
-  const result = await terminal.status(payment.folioId.slice(0, 24));
+
+  // A pending refund was published under the ORIGINAL transaction's
+  // reference, not the folio id (see refundPayment) — poll that instead.
+  if (payment.refundsPaymentId) {
+    const original = await prisma.payment.findFirstOrThrow({ where: { id: payment.refundsPaymentId } });
+    if (!original.providerTransactionId) throw new Error("Missing transaction reference to reconcile this refund.");
+    const refundable = await computeRefundable(original);
+    const amount = Math.abs(Number(payment.amountRequested));
+    // This refund's own attempt already counts as "consumed" inside
+    // computeRefundable (status is still pending), so add it back to get
+    // what was refundable right before this specific attempt.
+    const refundableBefore = Math.round((refundable + amount) * 100) / 100;
+    const result = await terminal.status(original.providerTransactionId);
+    return applyRefundResult(payment.id, original, amount, refundableBefore, input.propertyId, actingUser.id, result);
+  }
+
+  const result = await terminal.status(payment.id.slice(0, 24));
   return applyTerminalResult(payment.id, input.propertyId, actingUser.id, result);
 }
 
@@ -246,8 +263,9 @@ export async function takePreAuth(input: { propertyId: string; folioId: string; 
     },
   });
 
+  // payment.id, not folio.id — see the matching note in takePayment.
   const amountCents = Math.round(input.amount * 100);
-  const result = await terminal.preAuth({ amountCents, invoiceNumber: folio.id.slice(0, 24) });
+  const result = await terminal.preAuth({ amountCents, invoiceNumber: payment.id.slice(0, 24) });
 
   return applyTerminalResult(payment.id, input.propertyId, actingUser.id, result);
 }
@@ -300,6 +318,164 @@ export async function capturePreAuth(input: { propertyId: string; paymentId: str
   }
 
   return updated;
+}
+
+// How much of `payment` is still eligible to be refunded — its settled
+// amount minus anything already refunded (or in-flight, to stop two
+// concurrent refund attempts from together exceeding what was actually paid).
+async function computeRefundable(payment: { id: string; amountSettled: unknown }): Promise<number> {
+  const settled = Number(payment.amountSettled ?? 0);
+  const priorRefunds = await prisma.payment.findMany({
+    where: { refundsPaymentId: payment.id, status: { in: ["approved", "pending"] } },
+  });
+  const consumed = priorRefunds.reduce((sum, r) => sum + Math.abs(Number(r.amountRequested)), 0);
+  return Math.round((settled - consumed) * 100) / 100;
+}
+
+// Flips the ORIGINAL payment to status = refunded, but only once nothing is
+// left to refund — a partial refund leaves it "approved" (some of that money
+// is still legitimately settled).
+async function maybeMarkOriginalRefunded(
+  original: { id: string },
+  amount: number,
+  refundableBefore: number,
+  propertyId: string,
+  userId: string
+) {
+  const remaining = Math.round((refundableBefore - amount) * 100) / 100;
+  if (remaining > 0) return;
+
+  await prisma.payment.update({ where: { id: original.id }, data: { status: "refunded" } });
+  await prisma.auditLog.create({
+    data: {
+      propertyId,
+      userId,
+      entityType: "payment",
+      entityId: original.id,
+      action: "payment_refunded",
+      after: { amount },
+    },
+  });
+}
+
+async function applyRefundResult(
+  refundPaymentId: string,
+  original: { id: string },
+  amount: number,
+  refundableBefore: number,
+  propertyId: string,
+  userId: string,
+  result: TxnResult
+) {
+  // Same timeout discipline as applyTerminalResult (CLAUDE.md rule #8): never
+  // auto-retry, leave it pending for the clerk to RECONCILE.
+  if (result.status === "timeout") {
+    await prisma.payment.update({
+      where: { id: refundPaymentId },
+      data: { rawResponse: result.raw as Prisma.InputJsonValue },
+    });
+    return prisma.payment.findUniqueOrThrow({ where: { id: refundPaymentId } });
+  }
+
+  const approved = result.status === "approved";
+  const updated = await prisma.payment.update({
+    where: { id: refundPaymentId },
+    data: {
+      status: approved ? "approved" : "declined",
+      amountSettled: approved ? -(result.amountSettled / 100) : null,
+      providerTransactionId: result.transactionId || null,
+      providerRrn: result.rrn || null,
+      authCode: result.authCode || null,
+      maskedPan: result.maskedPan || null,
+      cardBrand: result.cardBrand || null,
+      entryMode: result.entryMode || null,
+      rawResponse: result.raw as Prisma.InputJsonValue,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      propertyId,
+      userId,
+      entityType: "payment",
+      entityId: refundPaymentId,
+      action: approved ? "refund_approved" : "refund_declined",
+      after: { refundsPaymentId: original.id, amount, transactionId: result.transactionId },
+    },
+  });
+
+  if (approved) {
+    await maybeMarkOriginalRefunded(original, amount, refundableBefore, propertyId, userId);
+  }
+
+  return updated;
+}
+
+// Refunds all or part of a previously settled payment (a completed sale, or
+// a captured pre-auth — not an open pre-auth, which is voided instead since
+// no money has actually moved yet). Card refunds go through the terminal;
+// cash/check/other just record that the clerk handed money back.
+export async function refundPayment(input: { propertyId: string; paymentId: string; amount?: number }) {
+  const payment = await prisma.payment.findFirstOrThrow({ where: { id: input.paymentId } });
+  if (payment.refundsPaymentId) throw new Error("A refund can't itself be refunded.");
+  if (payment.status !== "approved") throw new Error("Only an approved, settled payment can be refunded.");
+  if (payment.isPreauth && !payment.preauthCapturedAt) {
+    throw new Error("This is an open pre-authorization — void it instead of refunding.");
+  }
+  if (payment.method === "card" && !payment.providerTransactionId) {
+    throw new Error("Missing transaction reference for this payment.");
+  }
+
+  const refundable = await computeRefundable(payment);
+  if (refundable <= 0) throw new Error("This payment has already been fully refunded.");
+
+  const amount = input.amount ?? refundable;
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid refund amount.");
+  if (Math.round(amount * 100) > Math.round(refundable * 100)) {
+    throw new Error(`Cannot refund more than $${refundable.toFixed(2)} — that's all that's left on this payment.`);
+  }
+
+  const actingUser = await getActingUser(input.propertyId);
+
+  // Write the refund as pending BEFORE calling the terminal (CLAUDE.md rule
+  // #8) — same reasoning as takePayment: if the call times out, there's
+  // still a row to reconcile instead of a lost, unrecorded attempt.
+  const refund = await prisma.payment.create({
+    data: {
+      folioId: payment.folioId,
+      createdByUserId: actingUser.id,
+      method: payment.method,
+      amountRequested: -amount,
+      status: payment.method === "card" ? "pending" : "approved",
+      provider: payment.method === "card" ? payment.provider : "none",
+      refundsPaymentId: payment.id,
+      ...(payment.method !== "card" ? { amountSettled: -amount } : {}),
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      propertyId: input.propertyId,
+      userId: actingUser.id,
+      entityType: "payment",
+      entityId: refund.id,
+      action: "refund_initiated",
+      after: { refundsPaymentId: payment.id, amount, method: payment.method },
+    },
+  });
+
+  if (payment.method !== "card") {
+    await maybeMarkOriginalRefunded(payment, amount, refundable, input.propertyId, actingUser.id);
+    return refund;
+  }
+
+  const amountCents = Math.round(amount * 100);
+  const result = await terminal.refund({
+    transactionId: payment.providerTransactionId!,
+    amountCents,
+  });
+
+  return applyRefundResult(refund.id, payment, amount, refundable, input.propertyId, actingUser.id, result);
 }
 
 export async function voidPreAuth(input: { propertyId: string; paymentId: string }) {

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { addIncidentalCharge, extendStay } from "@/lib/data/folio";
-import { capturePreAuth, reconcilePayment, takePayment, takePreAuth, voidPreAuth } from "@/lib/data/payments";
+import { capturePreAuth, reconcilePayment, refundPayment, takePayment, takePreAuth, voidPreAuth } from "@/lib/data/payments";
 import { checkOutStay } from "@/lib/data/checkout";
 
 export type FolioActionState = { error?: string };
@@ -121,6 +121,30 @@ export async function voidPreAuthAction(
     await voidPreAuth({ propertyId, paymentId });
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Could not void pre-authorization." };
+  }
+
+  revalidatePath(`/stays/${stayId}`);
+  return {};
+}
+
+export async function refundPaymentAction(
+  _prevState: FolioActionState,
+  formData: FormData
+): Promise<FolioActionState> {
+  const propertyId = String(formData.get("propertyId") || "");
+  const stayId = String(formData.get("stayId") || "");
+  const paymentId = String(formData.get("paymentId") || "");
+  const amountRaw = formData.get("amount");
+  const amount = amountRaw ? Number(amountRaw) : undefined;
+
+  if (amount !== undefined && (!Number.isFinite(amount) || amount <= 0)) {
+    return { error: "Enter a valid refund amount." };
+  }
+
+  try {
+    await refundPayment({ propertyId, paymentId, amount });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not process refund." };
   }
 
   revalidatePath(`/stays/${stayId}`);

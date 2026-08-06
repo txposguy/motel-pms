@@ -21,17 +21,17 @@ import type {
 //     identically regardless of query suffix, including no suffix at all)
 //   - status() (txn_type "vc_status") round-trips correctly
 //   - sale()/preAuth() request shape matches Valor's documented schema
+//   - capture()/void() confirmed live — both need the original transaction's
+//     TRAN_NO (see providerRef on CaptureRequest/VoidRequest) in addition to
+//     the amount; amount 0 is rejected
+//   - refund() confirmed live — unlike capture/void, no TRAN_NO/providerRef
+//     was needed; REQ_TXN_ID + amount + TRAN_MODE "credit" was enough to
+//     refund a previously-captured transaction back to the card
 //
-// NOT YET LIVE-VERIFIED: capture()/void()/refund()/settle(). These are built
-// from the TRAN_CODE/TRAN_MODE reference tables provided by the ISV team
-// (Void=2, Ticket/Capture=4, Refund=5, Settlement=9; TRAN_MODE "0" = "FETCH
-// TRANSACTION" for Void/Ticket/Settlement/Tip Adjust/Reprint) plus the
-// pattern confirmed for sale/status, but Valor's docs never showed a
-// complete capture/void/refund payload example, and no test call has been
-// made (doing so blind would either fail against a nonexistent prior
-// transaction or, worse, behave unpredictably against a real one). Test
-// these live — a small test sale immediately followed by a void/capture —
-// before relying on them for a real guest charge.
+// NOT YET LIVE-VERIFIED: settle(). Built from the TRAN_CODE/TRAN_MODE
+// reference tables provided by the ISV team (Settlement=9, TRAN_MODE "0" =
+// "FETCH TRANSACTION") but never called against the real terminal — it's
+// also not wired into any UI/business-logic path yet.
 
 const BASE_URL = "https://securelink-staging.valorpaytech.com:443/";
 const REQUEST_TIMEOUT_MS = 90_000; // generous — a card tap/dip/swipe needs real time
@@ -216,8 +216,8 @@ export class ValorConnectTerminal implements PaymentTerminal {
     return publish(req.invoiceNumber, TRAN_CODE.preauth, TRAN_MODE.credit, req.amountCents);
   }
 
-  // UNVERIFIED — see file header. Same payload shape as the now-confirmed
-  // void() below (same TRAN_MODE family), so likely also needs TRAN_NO.
+  // Live-tested end to end — same TRAN_MODE family as void() below, and
+  // needs the same TRAN_NO (providerRef) to identify the original transaction.
   async capture(req: CaptureRequest): Promise<TxnResult> {
     return publish(req.transactionId, TRAN_CODE.ticket, TRAN_MODE.fetchTransaction, req.amountCents, {
       ...(req.providerRef ? { TRAN_NO: req.providerRef } : {}),
@@ -237,10 +237,11 @@ export class ValorConnectTerminal implements PaymentTerminal {
     });
   }
 
-  // UNVERIFIED — see file header. TRAN_MODE "credit" is a best guess: Valor's
-  // "FETCH TRANSACTION" list (Void/Ticket/Settlement/Tip Adjust/Reprint)
-  // does not include Refund, which is why this doesn't use TRAN_MODE "0"
-  // like capture/void do.
+  // Live-tested end to end against a real captured transaction. Confirmed
+  // TRAN_MODE "credit" (not "0"/FETCH TRANSACTION like capture/void) is
+  // correct — matches Valor's "FETCH TRANSACTION" list excluding Refund.
+  // Unlike capture/void, no TRAN_NO was required — REQ_TXN_ID + amount was
+  // sufficient to identify and refund the original transaction.
   async refund(req: RefundRequest): Promise<TxnResult> {
     return publish(req.transactionId, TRAN_CODE.refund, TRAN_MODE.credit, req.amountCents);
   }

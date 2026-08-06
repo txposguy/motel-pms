@@ -25,6 +25,29 @@ describe("computeBalance", () => {
     expect(computeBalance(100, payments)).toBe(50);
   });
 
+  describe("refunds", () => {
+    // A full refund relabels the original "refunded" but must keep counting
+    // its full amount here — only the linked negative refund row should
+    // actually move the balance. A live test caught this double-counting:
+    // a $1.08 refund raised the balance by $2.16 before this was fixed.
+    it("a full refund nets to zero, not double the refunded amount", () => {
+      const payments = [
+        { status: "refunded", isPreauth: true, preauthCapturedAt: new Date(), amountSettled: 108 },
+        { status: "approved", isPreauth: false, preauthCapturedAt: null, amountSettled: -108 },
+      ];
+      expect(computePaidAmount(payments)).toBe(0);
+      expect(computeBalance(100, payments)).toBe(100);
+    });
+
+    it("a partial refund reduces paid by only the refunded amount", () => {
+      const payments = [
+        { status: "approved", isPreauth: false, preauthCapturedAt: null, amountSettled: 100 },
+        { status: "approved", isPreauth: false, preauthCapturedAt: null, amountSettled: -30 },
+      ];
+      expect(computePaidAmount(payments)).toBe(70);
+    });
+  });
+
   it("rounds away floating-point noise", () => {
     // 123.45 - (65 + 3.90 + 4.55 + 20.99 + 20.99 + 7.99) style accumulation
     // is exactly the kind of subtraction that leaves 29.010000000000005.

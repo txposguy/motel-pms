@@ -7,7 +7,13 @@ export type TxnStatus = "approved" | "declined" | "voided" | "error" | "timeout"
 
 export type SaleRequest = {
   amountCents: number; // always the CASH price (PRD §6.2 rule 1) — see surchargeAmountCents for card
-  invoiceNumber: string; // = folio id, max 24 chars — used for reconciliation
+  // = the payment row's own id, max 24 chars — used for reconciliation.
+  // Must be unique PER TRANSACTION ATTEMPT, not shared across a folio: a
+  // live refund test against Valor Connect showed the provider identifies a
+  // transaction by this reference alone, so two card transactions on the
+  // same folio sharing one reference (e.g. both using the folio id, as
+  // originally specified) become ambiguous to look up individually later.
+  invoiceNumber: string;
   allowPartial?: boolean;
   tokenize?: boolean; // request a token for card-on-file
   token?: string; // charge an existing token (weekly renewals)

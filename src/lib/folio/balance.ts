@@ -7,9 +7,19 @@ export type PaymentForBalance = {
 
 // An approved pre-authorization only holds funds — it doesn't count as
 // "paid" against the balance until it's actually captured.
+//
+// A refund is its own Payment row with a NEGATIVE amountSettled, linked back
+// to the original via refundsPaymentId (see refundPayment in payments.ts) —
+// its negative amount is what actually reverses the balance. The ORIGINAL
+// payment gets relabeled status "refunded" once nothing's left owed on it,
+// but that's a display label only: it must keep counting its full original
+// amount here, or the reversal double-counts (the original's own amount
+// disappearing from the sum, AND the refund row subtracting it again) —
+// caught via a live refund test that showed a $1.08 refund raising the
+// balance by $2.16 instead of $1.08.
 export function computePaidAmount(payments: PaymentForBalance[]): number {
   return payments
-    .filter((p) => p.status === "approved" && (!p.isPreauth || p.preauthCapturedAt))
+    .filter((p) => (p.status === "approved" || p.status === "refunded") && (!p.isPreauth || p.preauthCapturedAt))
     .reduce((sum, p) => sum + (p.amountSettled ?? 0), 0);
 }
 

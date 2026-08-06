@@ -244,6 +244,7 @@ Shows the stay, the running charges, the payments, and the balance.
 - `EXTEND STAY` → adds nights/hours, posts new room charges + tax
 - `MOVE ROOM` → changes `room_id`, logs to audit, flags old room dirty
 - `ADJUST` → posts a negative adjustment line (requires owner PIN over a configurable threshold)
+- `REFUND` → on any settled payment (a completed sale, or a captured pre-auth — not an open, uncaptured pre-auth, which is voided instead since no money has moved yet). Full or partial. Not gated on the folio being open — refunding after check-out is the normal case. Recorded as a new `payments` row linked back to the original via `refunds_payment_id`, not an edit to it, so a payment can be partially refunded more than once and the original's settled amount stays a true historical record. The original is relabeled `refunded` only once nothing is left owed on it. Card refunds go through the terminal adapter (§5.2); cash/check/other just record that the clerk handed money back.
 - `CHECK OUT` → see 4.5
 - `PRINT FOLIO`
 
@@ -318,12 +319,22 @@ interface PaymentTerminal {
 
 interface SaleRequest {
   amountCents: number;          // the CARD price if host-calculated CD, else base
-  invoiceNumber: string;        // = folio id, max 24 chars — used for reconciliation
+  invoiceNumber: string;        // = the payment id, max 24 chars — used for reconciliation
   allowPartial?: boolean;
   tokenize?: boolean;           // request a token for card-on-file
   token?: string;               // charge an existing token (weekly renewals)
 }
+```
 
+> **Revised from the original spec**, which set `invoiceNumber = folio id`. A
+> live refund test against Valor Connect showed the provider identifies a
+> transaction by this reference alone — sharing one reference across every
+> card transaction on a folio (a retry, a second pre-auth, a pre-auth plus a
+> sale) made them ambiguous to look up individually later, and a refund
+> resolved to the wrong prior transaction as a result. The payment row's own
+> id is unique per attempt; use that instead.
+
+```ts
 interface TxnResult {
   status: 'approved' | 'declined' | 'voided' | 'error' | 'timeout';
   amountSettled: number;        // may exceed amountRequested under terminal-side CD
