@@ -372,6 +372,16 @@ interface TxnResult {
 
 Build **Valor first** (primary book of business), Dejavoo second.
 
+> **Live-tested finding (2026-08-07):** `settle()` is not a read-only status
+> check — calling it **closes** whatever batch is currently open on the
+> terminal, confirmed by pulling it twice in a row (a real transaction the
+> first time, "No Transaction To Settle" the second, because the first call
+> had already closed it out). Payment Reconciliation's UI gates it behind an
+> explicit confirm step for exactly this reason — loading the report must
+> never have the side effect of closing a batch. Also needs a `REQ_TXN_ID`
+> in the request despite not being tied to any one transaction, or Valor
+> rejects it outright ("REQUEST TXN ID REQUIRED").
+
 ### 5.4 The timeout problem — handle this explicitly
 
 A terminal transaction can approve at the processor and then fail to return a response to the PMS (network blip, clerk unplugs it, browser closes). If you naively retry, you double-charge a guest.
@@ -580,4 +590,3 @@ Pick your **friendliest existing motel client**. Run the PMS **in parallel with 
 - [ ] Confirm whether Valor Connect cloud mode or TCP/WebSocket is more reliable on typical motel networks. Test both at the pilot.
 - [ ] What's the ID-image retention default the lawyer is comfortable with?
 - [ ] **Shift Report** (§4.8) currently shows cash/card totals and transaction count per user only — there's no clock-in/out or counted-cash-in-drawer entry anywhere in the app, so "cash in drawer" and over/short can't be computed yet. Worth building a real shift-boundary concept, or is a per-user summary enough?
-- [ ] **Payment Reconciliation**'s "Pull Terminal Batch" (§4.8) calls `PaymentTerminal.settle()`, which — unlike every other terminal method — has not been live-tested against the real Valor terminal yet. Needs a live batch-settlement test before its mismatch-flagging can be trusted.

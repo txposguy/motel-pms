@@ -13,13 +13,13 @@ const terminal: PaymentTerminal =
 
 // PRD §4.8: "PMS payments vs. terminal batch — flags mismatches (critical
 // under cash discount)." The PMS side is solid — real data, always
-// available. The terminal side calls settle(), which is UNVERIFIED against
-// the real Valor terminal (see valorConnectTerminal.ts) — every other
-// terminal method in this app was live-tested against the real demo unit
-// before being trusted, and this one hasn't been yet. Kept as a separate,
-// explicit action (not run automatically) so a mismatch it reports isn't
-// mistaken for a proven-accurate reconciliation until that verification
-// happens.
+// available. The terminal side calls settle(), live-verified against the
+// real Valor terminal (see valorConnectTerminal.ts) — but settle() isn't a
+// harmless read, it's the real end-of-day action: it CLOSES whatever's
+// currently open on the terminal. Kept as a separate, explicit,
+// confirm-gated action (see PullBatchButton.tsx) rather than something run
+// automatically on page load, precisely because loading this report should
+// never have the side effect of closing a batch.
 export async function getPmsPaymentsForDate(propertyId: string, date: Date) {
   const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);

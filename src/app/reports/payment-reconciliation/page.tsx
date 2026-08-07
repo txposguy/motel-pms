@@ -28,9 +28,10 @@ export default async function PaymentReconciliationPage({ searchParams }: { sear
         </div>
 
         <p className="no-print mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-          Pulling the terminal batch has not yet been live-tested against the real Valor terminal — every other
-          terminal action in this app was verified live before being trusted, and this one hasn&apos;t been yet. The
-          terminal always reports its <em>current open batch</em>, regardless of which date is selected below.
+          Settling the terminal batch is the real end-of-day action — it closes out whatever&apos;s currently open on
+          the terminal, and anything charged afterward starts a new batch. Only do it once, at the actual end of the
+          day, not just to check a number. The terminal always reports its <em>current open batch</em>, regardless of
+          which date is selected below.
         </p>
 
         <form className="no-print mb-3 flex items-end gap-3 rounded-md border border-gray-300 bg-white p-3">

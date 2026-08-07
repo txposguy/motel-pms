@@ -27,11 +27,15 @@ import type {
 //   - refund() confirmed live — unlike capture/void, no TRAN_NO/providerRef
 //     was needed; REQ_TXN_ID + amount + TRAN_MODE "credit" was enough to
 //     refund a previously-captured transaction back to the card
+//   - settle() confirmed live against both response shapes: an empty open
+//     batch ("No Transaction To Settle") and a populated one (BATCH_NO,
+//     TOTAL_TRAN_COUNT, AMOUNT in cents — confirmed against a real $1.03
+//     test sale). Also needs REQ_TXN_ID despite not being tied to any one
+//     transaction — omitting it is rejected outright ("REQUEST TXN ID
+//     REQUIRED").
 //
-// NOT YET LIVE-VERIFIED: settle(). Built from the TRAN_CODE/TRAN_MODE
-// reference tables provided by the ISV team (Settlement=9, TRAN_MODE "0" =
-// "FETCH TRANSACTION") but never called against the real terminal — it's
-// also not wired into any UI/business-logic path yet.
+// Every PaymentTerminal method is now live-verified against the real
+// terminal. Used by Payment Reconciliation (PRD §4.8, slice 10).
 
 const BASE_URL = "https://securelink-staging.valorpaytech.com:443/";
 const REQUEST_TIMEOUT_MS = 90_000; // generous — a card tap/dip/swipe needs real time
@@ -259,7 +263,13 @@ export class ValorConnectTerminal implements PaymentTerminal {
     }
   }
 
-  // UNVERIFIED — see file header. Not currently called anywhere in the app.
+  // Live-tested end to end, including both real shapes Valor returns:
+  //   - an empty open batch: STATE "-1", ERROR_MSG "No Transaction To
+  //     Settle", no BATCH_NO/AMOUNT/TOTAL_TRAN_COUNT fields at all — mapped
+  //     to a zeroed BatchResult, not an error, since it's a normal state
+  //     (the batch was already settled, or nothing's been charged yet).
+  //   - a populated batch: STATE "0", BATCH_NO, TOTAL_TRAN_COUNT, AMOUNT
+  //     (cents, confirmed against a real $1.03 test sale).
   async settle(): Promise<BatchResult> {
     const { appid, appkey, epi, channelId } = getCredentials();
     const envelope = await callValor({
@@ -269,9 +279,26 @@ export class ValorConnectTerminal implements PaymentTerminal {
       channel_id: channelId,
       txn_type: "vc_publish",
       version: "1",
-      payload: { TRAN_MODE: TRAN_MODE.fetchTransaction, TRAN_CODE: TRAN_CODE.settlement },
+      // REQ_TXN_ID is required even though a settlement isn't tied to any
+      // one transaction — a first attempt without it was rejected outright
+      // ("REQUEST TXN ID REQUIRED"). A timestamp-based value is enough to
+      // satisfy the field; it isn't referenced anywhere afterward the way a
+      // sale/void/refund's REQ_TXN_ID is.
+      payload: { TRAN_MODE: TRAN_MODE.fetchTransaction, TRAN_CODE: TRAN_CODE.settlement, REQ_TXN_ID: `settle-${Date.now()}` },
     });
-    return { batchId: "", totalCount: 0, totalAmountCents: 0, raw: envelope };
+
+    const raw = redact(envelope);
+    if (envelope.error_no !== "S00" || typeof envelope.response !== "object" || !envelope.response) {
+      return { batchId: "", totalCount: 0, totalAmountCents: 0, raw };
+    }
+
+    const r = envelope.response as Record<string, unknown>;
+    return {
+      batchId: fieldStr(r, "BATCH_NO") ?? "",
+      totalCount: r.TOTAL_TRAN_COUNT !== undefined ? Number(r.TOTAL_TRAN_COUNT) : 0,
+      totalAmountCents: r.AMOUNT !== undefined ? Number(r.AMOUNT) : 0,
+      raw,
+    };
   }
 }
 
