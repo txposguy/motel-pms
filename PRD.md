@@ -579,3 +579,5 @@ Pick your **friendliest existing motel client**. Run the PMS **in parallel with 
 - [ ] Do any target properties need Spanish for the **front desk**, not just housekeeping?
 - [ ] Confirm whether Valor Connect cloud mode or TCP/WebSocket is more reliable on typical motel networks. Test both at the pilot.
 - [ ] What's the ID-image retention default the lawyer is comfortable with?
+- [ ] **Shift Report** (§4.8) currently shows cash/card totals and transaction count per user only — there's no clock-in/out or counted-cash-in-drawer entry anywhere in the app, so "cash in drawer" and over/short can't be computed yet. Worth building a real shift-boundary concept, or is a per-user summary enough?
+- [ ] **Payment Reconciliation**'s "Pull Terminal Batch" (§4.8) calls `PaymentTerminal.settle()`, which — unlike every other terminal method — has not been live-tested against the real Valor terminal yet. Needs a live batch-settlement test before its mismatch-flagging can be trusted.
