@@ -373,6 +373,12 @@ interface TxnResult {
 
 Build **Valor first** (primary book of business), Dejavoo second.
 
+> **Deferred (2026-08-07):** Dejavoo is on hold — see §11, Slice 11. No pilot
+> property currently needs it, so there's no terminal to test against
+> anyway (same "no live terminal, no trust" bar every Valor method was held
+> to). Nothing about deferring it requires touching what's already built —
+> `PaymentTerminal` (§5.2) doesn't know or care which provider is behind it.
+
 > **Live-tested finding (2026-08-07):** `settle()` is not a read-only status
 > check — calling it **closes** whatever batch is currently open on the
 > terminal, confirmed by pulling it twice in a row (a real transaction the
@@ -543,7 +549,7 @@ Each phase must be independently demoable. Do not move on until the previous sli
 | 8 | **Housekeeping** | Desktop assignment view + phone PWA with three buttons + Spanish toggle. |
 | 9 | **Night audit** | Idempotent, transactional. Posts charges, increments counters, **fires the 30-day exemption**, closes the date. |
 | 10 | **Reports** | The eight reports in §4.8. Tax report must be filing-ready. |
-| 11 | **Dejavoo adapter** | Second implementation of the same interface. |
+| 11 | **Dejavoo adapter** *(deferred — owner decision, 2026-08-07)* | Second implementation of the same interface. On hold, possibly to v2 — no pilot property currently needs it, and the `PaymentTerminal` interface (§5.2) was already built provider-agnostic, so this stays a clean drop-in whenever it's actually needed. |
 | 12 | **Hardening** | Sentry, rate limits, encryption verification, retention job, catch-up entry screen. |
 
 ---
