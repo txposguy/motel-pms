@@ -4,6 +4,7 @@ import type {
   PaymentTerminal,
   PreAuthRequest,
   RefundRequest,
+  ReprintRequest,
   SaleRequest,
   TxnResult,
   TxnStatus,
@@ -34,8 +35,16 @@ import type {
 //     transaction — omitting it is rejected outright ("REQUEST TXN ID
 //     REQUIRED").
 //
-// Every PaymentTerminal method is now live-verified against the real
-// terminal. Used by Payment Reconciliation (PRD §4.8, slice 10).
+// STILL BROKEN: reprint(). TRAN_CODE 11 is confirmed correct (from Valor's
+// full TRAN_CODE reference table), and the request no longer errors once
+// TRAN_NO is left out — but it printed a real receipt with the wrong
+// amount ($0 for a real $1.03 sale) and the wrong card details (ISSUER
+// "UNKNOWN" against a known Mastercard). It isn't identifying the
+// requested transaction correctly. Do not treat an "approved" result from
+// this method as trustworthy yet — see its own comment below.
+//
+// Every other PaymentTerminal method is live-verified against the real
+// terminal.
 
 const BASE_URL = "https://securelink-staging.valorpaytech.com:443/";
 const REQUEST_TIMEOUT_MS = 90_000; // generous — a card tap/dip/swipe needs real time
@@ -47,6 +56,7 @@ const TRAN_CODE = {
   ticket: "4", // capture/completion
   refund: "5",
   settlement: "9",
+  reprint: "11", // from Valor's full TRAN_CODE reference table (2026-08-07)
 } as const;
 
 const TRAN_MODE = {
@@ -248,6 +258,22 @@ export class ValorConnectTerminal implements PaymentTerminal {
   // sufficient to identify and refund the original transaction.
   async refund(req: RefundRequest): Promise<TxnResult> {
     return publish(req.transactionId, TRAN_CODE.refund, TRAN_MODE.credit, req.amountCents);
+  }
+
+  // BROKEN — do not trust this yet. Without TRAN_NO it no longer errors
+  // ("No Record Found!" when TRAN_NO was included, by analogy with
+  // capture/void), but the terminal actually printed a receipt showing $0
+  // for a real $1.03 sale, and the response's ISSUER came back "UNKNOWN"
+  // against a known Mastercard — it isn't finding OUR transaction, it's
+  // printing *something* generic. A wrong receipt is worse than a clean
+  // failure (a clerk could hand a guest a $0 receipt for a real charge).
+  // REQ_TXN_ID here is our own MER_TXN_ID (the payment id), same as every
+  // other FETCH TRANSACTION call — that's clearly not what reprint uses to
+  // look up a transaction. Needs more live iteration before this is safe to
+  // offer a clerk; see ReprintAtTerminalButton.tsx, which is left wired up
+  // but visibly marked broken rather than removed.
+  async reprint(req: ReprintRequest): Promise<TxnResult> {
+    return publish(req.transactionId, TRAN_CODE.reprint, TRAN_MODE.fetchTransaction, req.amountCents);
   }
 
   async status(txnId: string): Promise<TxnResult> {

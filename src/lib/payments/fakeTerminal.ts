@@ -4,6 +4,7 @@ import type {
   PaymentTerminal,
   PreAuthRequest,
   RefundRequest,
+  ReprintRequest,
   SaleRequest,
   TxnResult,
   VoidRequest,
@@ -174,6 +175,16 @@ export class FakeTerminal implements PaymentTerminal {
       amountSettled: req.amountCents,
       transactionId: req.transactionId,
       raw: { simulated: true, refunded: true },
+    };
+  }
+
+  async reprint(req: ReprintRequest): Promise<TxnResult> {
+    await delay(400);
+    return {
+      status: "approved",
+      amountSettled: req.amountCents,
+      transactionId: req.transactionId,
+      raw: { simulated: true, reprinted: true },
     };
   }
 

@@ -515,3 +515,41 @@ export async function voidPreAuth(input: { propertyId: string; paymentId: string
 
   return updated;
 }
+
+// Asks the terminal to reprint its own paper receipt for a card
+// transaction — a duplicate of what physically printed at the time,
+// distinct from the PMS-generated receipt (src/lib/data/receipts.ts, works
+// for every payment method, no terminal involved). Card only: cash/check
+// never had a terminal receipt to reprint. Live-tested — see the comment on
+// ValorConnectTerminal.reprint() for why no providerRef is passed here,
+// unlike capture/void.
+export async function reprintAtTerminal(input: { propertyId: string; paymentId: string }) {
+  const payment = await prisma.payment.findFirstOrThrow({ where: { id: input.paymentId } });
+  if (payment.method !== "card") throw new Error("Only card payments can be reprinted at the terminal.");
+  if (!payment.providerTransactionId) throw new Error("Missing transaction reference for this payment.");
+
+  const actingUser = await getActingUser(input.propertyId);
+  const amountCents = Math.round(Math.abs(Number(payment.amountSettled ?? payment.amountRequested)) * 100);
+
+  const result = await terminal.reprint({
+    transactionId: payment.providerTransactionId,
+    amountCents,
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      propertyId: input.propertyId,
+      userId: actingUser.id,
+      entityType: "payment",
+      entityId: payment.id,
+      action: result.status === "approved" ? "receipt_reprinted_at_terminal" : "receipt_reprint_failed",
+      after: { status: result.status },
+    },
+  });
+
+  if (result.status !== "approved") {
+    throw new Error("The terminal could not reprint this receipt — check the terminal screen.");
+  }
+
+  return result;
+}

@@ -247,6 +247,7 @@ Shows the stay, the running charges, the payments, and the balance.
 - `REFUND` → on any settled payment (a completed sale, or a captured pre-auth — not an open, uncaptured pre-auth, which is voided instead since no money has moved yet). Full or partial. Not gated on the folio being open — refunding after check-out is the normal case. Recorded as a new `payments` row linked back to the original via `refunds_payment_id`, not an edit to it, so a payment can be partially refunded more than once and the original's settled amount stays a true historical record. The original is relabeled `refunded` only once nothing is left owed on it. Card refunds go through the terminal adapter (§5.2); cash/check/other just record that the clerk handed money back.
 - `CHECK OUT` → see 4.5
 - `PRINT FOLIO`
+- `Receipt` (per payment row) → a single-transaction receipt, built entirely from what's already stored on that `payments` row (amount, masked card, auth code, RRN...). No terminal call, works for every payment method, and doesn't depend on the terminal being reachable — this is the answer to "the clerk needs to reprint a transaction" for the general case. See §5.3 for the Valor-specific terminal reprint, which duplicates the terminal's own paper receipt for card payments only.
 
 ### 4.5 Check-Out
 
@@ -381,6 +382,18 @@ Build **Valor first** (primary book of business), Dejavoo second.
 > never have the side effect of closing a batch. Also needs a `REQ_TXN_ID`
 > in the request despite not being tied to any one transaction, or Valor
 > rejects it outright ("REQUEST TXN ID REQUIRED").
+
+> **Known broken (2026-08-07):** the terminal reprint feature (TRAN_CODE 11,
+> confirmed correct) does not correctly identify which transaction to
+> reprint. A live test against a real $1.03 card sale printed a real
+> receipt from the terminal, but showing **$0** and the wrong card issuer —
+> not an error, an actively wrong receipt. `REQ_TXN_ID` set to our own
+> payment id (the same pattern that works for sale/void/capture/refund)
+> does not correctly look up the original transaction here. Needs more live
+> investigation before a clerk should use it — see
+> `ValorConnectTerminal.reprint()`. The PMS-generated receipt (§4.4,
+> `src/lib/data/receipts.ts`) is unaffected and correct — it doesn't call
+> the terminal at all.
 
 ### 5.4 The timeout problem — handle this explicitly
 

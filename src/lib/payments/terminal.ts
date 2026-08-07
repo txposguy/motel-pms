@@ -54,6 +54,15 @@ export type RefundRequest = {
   amountCents: number;
 };
 
+export type ReprintRequest = {
+  transactionId: string;
+  // Discovered live: unlike capture/void (same "FETCH TRANSACTION" family),
+  // reprint does NOT take a providerRef/TRAN_NO — including one breaks the
+  // lookup ("No Record Found!"). REQ_TXN_ID + amount alone is correct,
+  // matching refund's behavior instead.
+  amountCents: number;
+};
+
 export type TxnResult = {
   status: TxnStatus;
   amountSettled: number; // may exceed amountRequested under terminal-side cash discount
@@ -81,6 +90,7 @@ export interface PaymentTerminal {
   capture(req: CaptureRequest): Promise<TxnResult>; // ticket/completion
   void(req: VoidRequest): Promise<TxnResult>;
   refund(req: RefundRequest): Promise<TxnResult>;
+  reprint(req: ReprintRequest): Promise<TxnResult>; // re-prints the terminal's own paper receipt for a card transaction
   status(txnId: string): Promise<TxnResult>; // for timeout recovery
   settle(): Promise<BatchResult>;
   ping(): Promise<boolean>;
