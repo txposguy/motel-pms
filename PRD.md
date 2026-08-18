@@ -248,6 +248,7 @@ Shows the stay, the running charges, the payments, and the balance.
 - `CHECK OUT` → see 4.5
 - `PRINT FOLIO`
 - `Receipt` (per payment row) → a single-transaction receipt, built entirely from what's already stored on that `payments` row (amount, masked card, auth code, RRN...). No terminal call, works for every payment method, and doesn't depend on the terminal being reachable — this is the answer to "the clerk needs to reprint a transaction" for the general case. See §5.3 for the Valor-specific terminal reprint, which duplicates the terminal's own paper receipt for card payments only.
+- `Chargeback Packet` (per card payment row) → a printable evidence packet for fighting a chargeback: the disputed transaction's terminal details, the guest's ID/vehicle on file (decrypted — access is audit-logged, same treatment as Guest Registry Export), the full folio itemization, every payment on the folio (the disputed one flagged), and the complete audit-log timeline for the stay. Assembled entirely from data LodgeDesk already has — no Valor API call. Print/save as PDF and upload to the processor's dispute portal manually; a true "submit straight to Valor" integration would need Valor to actually expose a dispute API to sub-merchants, which is unconfirmed and out of scope for now. Card only — chargebacks are a card-network mechanism.
 
 ### 4.5 Check-Out
 
@@ -587,6 +588,7 @@ Pick your **friendliest existing motel client**. Run the PMS **in parallel with 
 | Accounting Export | QuickBooks |
 | Advanced Reporting / Revenue | Pace, comp set, dynamic rates |
 | Digital Registration / Kiosk | Guest signs on a tablet, no paper at all |
+| Guest Photo Capture | Under consideration (2026-08-14) — owner researching what competitor PMS platforms do before deciding the approach: a webcam photo of the guest at check-in (cheap, no drivers, same "plug and go" hardware philosophy as the barcode scanner) vs. a dedicated ID-scanning device that photographs the card and extracts the printed photo (real integration project — vendor SDK, likely a local helper app, $300–1000+ hardware). Possibly a paid tier on top of the free barcode-only check-in. `guests.id_image_url` is already reserved in the data model (§3.2) with the same encrypted-bucket/signed-URL/retention treatment as the ID data — storage isn't the open question, capture hardware is. Real value already identified: chargeback evidence (a live guest photo is stronger proof than a card's printed photo, since it shows who was actually there) and security. |
 
 ---
 

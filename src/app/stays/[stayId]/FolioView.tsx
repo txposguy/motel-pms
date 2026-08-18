@@ -356,6 +356,14 @@ export function FolioView({
                           >
                             Receipt
                           </Link>
+                          {p.method === "card" && (
+                            <Link
+                              href={`/chargeback/${p.id}`}
+                              className="ml-1 rounded border border-gray-400 px-2 py-0.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                            >
+                              Chargeback Packet
+                            </Link>
+                          )}
                         </td>
                       </tr>
                     );
