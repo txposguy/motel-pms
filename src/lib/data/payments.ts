@@ -19,6 +19,21 @@ function mapTxnStatus(status: TxnResult["status"]): "approved" | "declined" | "v
   return "declined"; // declined | error — closest fit; clerk can retry either way
 }
 
+// Known provider errorCodes worth explaining specifically to the clerk,
+// instead of just "declined" — protocol-level failures where the request
+// never reached a card decision at all, as opposed to a genuine decline
+// (insufficient funds, etc.), where the terminal's own reason is enough.
+// VC03 confirmed live (2026-08-18): pushed a sale while the terminal had
+// been switched to standalone mode — it never received the request, and
+// Valor's response was error_no "VC03" / desc "DEVICE OFFLINE".
+const KNOWN_TERMINAL_ERRORS: Record<string, string> = {
+  VC03: "The terminal isn't in Valor Connect mode, so it never received this request. Press the VC button (small black circle, top center of the terminal screen) to switch it back to Valor Connect mode, then try again.",
+};
+
+function friendlyTerminalError(result: TxnResult): string | undefined {
+  return result.errorCode ? KNOWN_TERMINAL_ERRORS[result.errorCode] : undefined;
+}
+
 // Valor Connect needs the original transaction's TRAN_NO to void/capture it
 // (discovered live — see valorConnectTerminal.ts). It isn't a field on
 // TxnResult, but it's in the raw response we already persist.
@@ -109,6 +124,12 @@ async function applyTerminalResult(paymentId: string, propertyId: string, userId
   if (updated.status === "approved" && !updated.isPreauth) {
     await maybePostNonCashAdjustment(updated, propertyId, userId);
   }
+
+  // The decline is already recorded above (audit trail intact) — this only
+  // changes what the clerk sees right now, from a bare "declined" to
+  // actionable guidance for the specific, known cause.
+  const friendly = friendlyTerminalError(result);
+  if (friendly) throw new Error(friendly);
 
   return updated;
 }
@@ -317,6 +338,9 @@ export async function capturePreAuth(input: { propertyId: string; paymentId: str
     await maybePostNonCashAdjustment(updated, input.propertyId, actingUser.id);
   }
 
+  const friendly = friendlyTerminalError(result);
+  if (friendly) throw new Error(friendly);
+
   return updated;
 }
 
@@ -407,6 +431,9 @@ async function applyRefundResult(
   if (approved) {
     await maybeMarkOriginalRefunded(original, amount, refundableBefore, propertyId, userId);
   }
+
+  const friendly = friendlyTerminalError(result);
+  if (friendly) throw new Error(friendly);
 
   return updated;
 }
@@ -513,6 +540,9 @@ export async function voidPreAuth(input: { propertyId: string; paymentId: string
     },
   });
 
+  const friendly = friendlyTerminalError(result);
+  if (friendly) throw new Error(friendly);
+
   return updated;
 }
 
@@ -548,7 +578,7 @@ export async function reprintAtTerminal(input: { propertyId: string; paymentId: 
   });
 
   if (result.status !== "approved") {
-    throw new Error("The terminal could not reprint this receipt — check the terminal screen.");
+    throw new Error(friendlyTerminalError(result) ?? "The terminal could not reprint this receipt — check the terminal screen.");
   }
 
   return result;

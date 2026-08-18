@@ -74,6 +74,15 @@ export type TxnResult = {
   cardBrand?: string;
   entryMode?: string;
   token?: string;
+  // Set on a protocol-level failure (the request never reached a card
+  // decision at all — auth/config/connectivity problems), not on a normal
+  // card decline. errorCode is the provider's own code (e.g. Valor's
+  // "VC03"), so callers can react to specific ones — see payments.ts, which
+  // turns VC03 ("DEVICE OFFLINE" — the terminal isn't in Valor Connect
+  // mode) into an actionable message for the clerk instead of a bare
+  // "declined".
+  errorCode?: string;
+  errorMessage?: string;
   raw: unknown; // always persist
 };
 

@@ -150,6 +150,8 @@ function buildResult(envelope: ValorEnvelope, requestedAmountCents: number): Txn
       status: "error",
       amountSettled: 0,
       transactionId: "",
+      errorCode: envelope.error_no,
+      errorMessage: envelope.desc || envelope.mesg || envelope.msg,
       raw,
     };
   }
