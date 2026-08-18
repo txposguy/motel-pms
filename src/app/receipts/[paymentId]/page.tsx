@@ -61,6 +61,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ paymen
             {receipt.authCode && <Row label="Auth Code" value={receipt.authCode} />}
             {receipt.providerRrn && <Row label="RRN" value={receipt.providerRrn} />}
             {receipt.providerTransactionId && <Row label="Terminal Ref" value={receipt.providerTransactionId} />}
+            {receipt.authResponseText && <Row label="Auth Response" value={receipt.authResponseText} />}
           </div>
 
           <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-3">

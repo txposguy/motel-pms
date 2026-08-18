@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { fakeTerminal } from "@/lib/payments/fakeTerminal";
 import { valorConnectTerminal } from "@/lib/payments/valorConnectTerminal";
 import type { PaymentTerminal, TxnResult } from "@/lib/payments/terminal";
+import { extractProviderRef } from "@/lib/payments/rawResponse";
 import type { Prisma } from "@/generated/prisma/client";
 import { getActingUser } from "@/lib/data/actingUser";
 
@@ -32,17 +33,6 @@ const KNOWN_TERMINAL_ERRORS: Record<string, string> = {
 
 function friendlyTerminalError(result: TxnResult): string | undefined {
   return result.errorCode ? KNOWN_TERMINAL_ERRORS[result.errorCode] : undefined;
-}
-
-// Valor Connect needs the original transaction's TRAN_NO to void/capture it
-// (discovered live — see valorConnectTerminal.ts). It isn't a field on
-// TxnResult, but it's in the raw response we already persist.
-function extractProviderRef(rawResponse: Prisma.JsonValue | null): string | undefined {
-  if (!rawResponse || typeof rawResponse !== "object" || Array.isArray(rawResponse)) return undefined;
-  const response = (rawResponse as Record<string, unknown>).response;
-  if (!response || typeof response !== "object") return undefined;
-  const tranNo = (response as Record<string, unknown>).TRAN_NO;
-  return typeof tranNo === "string" ? tranNo : undefined;
 }
 
 // PRD §6.2 rule 3: the card fee is never blended into the room charge — it

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/encryption";
 import { getActingUser } from "@/lib/data/actingUser";
+import { extractAuthResponseText } from "@/lib/payments/rawResponse";
 
 // Option 1 from the chargeback-defense discussion: assemble everything
 // LodgeDesk already has into one printable evidence packet the owner
@@ -81,6 +82,11 @@ export async function getChargebackPacket(propertyId: string, paymentId: string)
       authCode: payment.authCode,
       providerRrn: payment.providerRrn,
       providerTransactionId: payment.providerTransactionId,
+      // Valor's own words about the authorization — the strongest evidence
+      // piece a keyed/manual transaction can offer, since there's no chip
+      // cryptogram to point to. On a real production card this is where an
+      // AVS/CVV match result would show up.
+      authResponseText: extractAuthResponseText(payment.rawResponse),
     },
     guest: {
       name: `${stay.guest.firstName} ${stay.guest.lastName}`,

@@ -71,6 +71,7 @@ export default async function ChargebackPacketPage({ params }: { params: Promise
               {packet.payment.authCode && <Field label="Auth Code" value={packet.payment.authCode} />}
               {packet.payment.providerRrn && <Field label="RRN" value={packet.payment.providerRrn} />}
               {packet.payment.providerTransactionId && <Field label="Terminal Ref" value={packet.payment.providerTransactionId} />}
+              {packet.payment.authResponseText && <Field label="Auth Response" value={packet.payment.authResponseText} />}
               {packet.payment.isPreauth && (
                 <Field label="Type" value={packet.payment.preauthCapturedAt ? "Pre-Authorization (Captured)" : "Pre-Authorization (Held)"} />
               )}

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { extractAuthResponseText } from "@/lib/payments/rawResponse";
 
 // A per-transaction receipt, built entirely from what LodgeDesk already
 // stores for a payment (amount, masked card, auth code, RRN...) — no
@@ -39,6 +40,10 @@ export async function getPaymentReceipt(propertyId: string, paymentId: string) {
     maskedPan: payment.maskedPan,
     cardBrand: payment.cardBrand,
     entryMode: payment.entryMode,
+    // Valor's own words about the authorization — on a real card this is
+    // where an AVS/CVV result would show up (e.g. "AVS MATCH"). See
+    // rawResponse.ts.
+    authResponseText: extractAuthResponseText(payment.rawResponse),
     property: {
       name: stay.property.name,
       address: stay.property.address,
