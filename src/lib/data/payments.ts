@@ -510,10 +510,18 @@ export async function voidPreAuth(input: { propertyId: string; paymentId: string
     providerRef: extractProviderRef(payment.rawResponse),
   });
 
+  // The real Valor adapter reports a successful void as status "approved"
+  // (mapState only ever returns approved/declined/error — see
+  // valorConnectTerminal.ts); the fake terminal uses "voided" for the same
+  // outcome. Either counts as success — anything else (declined/error/
+  // timeout) must NOT be recorded as voided, or a failed void would
+  // silently release a hold the terminal never actually released.
+  const voided = result.status === "approved" || result.status === "voided";
+
   const updated = await prisma.payment.update({
     where: { id: payment.id },
     data: {
-      status: "voided",
+      status: voided ? "voided" : "declined",
       amountSettled: 0,
       rawResponse: result.raw as Prisma.InputJsonValue,
     },
@@ -525,7 +533,7 @@ export async function voidPreAuth(input: { propertyId: string; paymentId: string
       userId: actingUser.id,
       entityType: "payment",
       entityId: payment.id,
-      action: "preauth_voided",
+      action: voided ? "preauth_voided" : "preauth_void_failed",
       after: {},
     },
   });
